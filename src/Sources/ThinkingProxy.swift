@@ -31,6 +31,9 @@ class ThinkingProxy {
     private let stateQueue = DispatchQueue(label: "io.automaze.vibeproxy.thinking-proxy-state")
 
     var vercelConfig = VercelGatewayConfig(enabled: false, apiKey: "")
+
+    /// Ordered list of providers to try on each request. First entry is always `.primary`.
+    var fallbackChain: [FallbackProvider] = [.defaultPrimary]
     
     private enum Config {
         static let hardTokenCap = 32000
@@ -286,7 +289,9 @@ class ThinkingProxy {
             return
         }
         
-        forwardRequest(method: method, path: rewrittenPath, version: httpVersion, headers: headers, body: modifiedBody, thinkingEnabled: thinkingEnabled, originalConnection: connection)
+        forwardWithFallback(method: method, path: rewrittenPath, version: httpVersion,
+                            headers: headers, body: modifiedBody, thinkingEnabled: thinkingEnabled,
+                            originalConnection: connection, providerIndex: 0)
     }
     
     private func isClaudeModelRequest(body: String) -> Bool {
@@ -695,177 +700,354 @@ class ThinkingProxy {
     private enum BetaHeaders {
         static let interleavedThinking = "interleaved-thinking-2025-05-14"
     }
-    
-    /**
-     Forwards the request to CLIProxyAPI on port 8318 (pass-through for non-thinking requests)
-     */
-    private func forwardRequest(method: String, path: String, version: String, headers: [(String, String)], body: String, thinkingEnabled: Bool = false, originalConnection: NWConnection, retryWithApiPrefix: Bool = false) {
-        // Create connection to CLIProxyAPI
+
+    // MARK: - Fallback Chain
+
+    /// Entry point: tries each provider in `fallbackChain` in order, advancing on retriable errors.
+    private func forwardWithFallback(
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        thinkingEnabled: Bool,
+        originalConnection: NWConnection,
+        providerIndex: Int
+    ) {
+        guard providerIndex < fallbackChain.count else {
+            NSLog("[ThinkingProxy] All \(fallbackChain.count) provider(s) failed — returning 502")
+            sendError(to: originalConnection, statusCode: 502, message: "All providers failed")
+            return
+        }
+        let provider = fallbackChain[providerIndex]
+        NSLog("[ThinkingProxy] Trying provider[\(providerIndex)] (\(provider.label))")
+
+        switch provider.kind {
+        case .primary:
+            forwardToPrimaryWithFallback(
+                method: method, path: path, version: version,
+                headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                originalConnection: originalConnection, providerIndex: providerIndex
+            )
+        case .ollama, .openaiCompatible:
+            forwardDirectWithFallback(
+                provider: provider,
+                method: method, path: path, version: version,
+                headers: headers, body: body,
+                originalConnection: originalConnection, providerIndex: providerIndex
+            )
+        }
+    }
+
+    /// Forwards to cli-proxy-api-plus (port 8318) with fallback-aware response checking.
+    private func forwardToPrimaryWithFallback(
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        thinkingEnabled: Bool,
+        originalConnection: NWConnection,
+        providerIndex: Int,
+        retryWithApiPrefix: Bool = true
+    ) {
         guard let port = NWEndpoint.Port(rawValue: targetPort) else {
-            NSLog("[ThinkingProxy] Invalid target port: %d", targetPort)
-            sendError(to: originalConnection, statusCode: 500, message: "Internal Server Error")
+            forwardWithFallback(method: method, path: path, version: version,
+                                headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                originalConnection: originalConnection, providerIndex: providerIndex + 1)
             return
         }
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(targetHost), port: port)
-        let parameters = NWParameters.tcp
-        let targetConnection = NWConnection(to: endpoint, using: parameters)
-        
-        targetConnection.stateUpdateHandler = { state in
+        let targetConn = NWConnection(to: endpoint, using: NWParameters.tcp)
+
+        targetConn.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
             switch state {
             case .ready:
-                // Build the forwarded request
-                var forwardedRequest = "\(method) \(path) \(version)\r\n"
-                let excludedHeaders: Set<String> = ["content-length", "host", "transfer-encoding"]
-                var existingBetaHeader: String? = nil
-                
-                for (name, value) in headers {
-                    let lowercasedName = name.lowercased()
-                    if excludedHeaders.contains(lowercasedName) {
-                        continue
+                let requestData = self.buildPrimaryRequestData(
+                    method: method, path: path, version: version,
+                    headers: headers, body: body, thinkingEnabled: thinkingEnabled
+                )
+                targetConn.send(content: requestData, completion: .contentProcessed { error in
+                    if let error = error {
+                        NSLog("[ThinkingProxy] Primary send error: \(error); trying next provider")
+                        targetConn.cancel()
+                        self.forwardWithFallback(method: method, path: path, version: version,
+                                                 headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                                 originalConnection: originalConnection, providerIndex: providerIndex + 1)
+                    } else {
+                        self.receiveResponseWithFallbackCheck(
+                            from: targetConn, originalConnection: originalConnection,
+                            method: method, path: path, version: version,
+                            headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                            providerIndex: providerIndex, retryWithApiPrefix: retryWithApiPrefix
+                        )
                     }
-                    // Capture existing anthropic-beta header for merging
-                    if lowercasedName == "anthropic-beta" {
-                        existingBetaHeader = value
-                        continue
-                    }
-                    forwardedRequest += "\(name): \(value)\r\n"
-                }
-                
-                // Add/merge anthropic-beta header when thinking is enabled
-                if thinkingEnabled {
-                    var betaValue = BetaHeaders.interleavedThinking
-                    if let existing = existingBetaHeader {
-                        // Merge with existing header if not already present
-                        if !existing.contains(BetaHeaders.interleavedThinking) {
-                            betaValue = "\(existing),\(BetaHeaders.interleavedThinking)"
-                        } else {
-                            betaValue = existing
-                        }
-                    }
-                    forwardedRequest += "anthropic-beta: \(betaValue)\r\n"
-                    NSLog("[ThinkingProxy] Added interleaved thinking beta header")
-                } else if let existing = existingBetaHeader {
-                    // Pass through existing header when thinking not enabled
-                    forwardedRequest += "anthropic-beta: \(existing)\r\n"
-                }
-                
-                // Override Host header
-                forwardedRequest += "Host: \(self.targetHost):\(self.targetPort)\r\n"
-                // Always close connections - this proxy doesn't support keep-alive/pipelining
-                forwardedRequest += "Connection: close\r\n"
-                
-                let contentLength = body.utf8.count
-                forwardedRequest += "Content-Length: \(contentLength)\r\n"
-                forwardedRequest += "\r\n"
-                forwardedRequest += body
-                
-                // Send to CLIProxyAPI
-                if let requestData = forwardedRequest.data(using: .utf8) {
-                    targetConnection.send(content: requestData, completion: .contentProcessed({ error in
-                        if let error = error {
-                            NSLog("[ThinkingProxy] Send error: \(error)")
-                            targetConnection.cancel()
-                            originalConnection.cancel()
-                        } else {
-                            // Receive response from CLIProxyAPI (with 404 retry capability)
-                            if retryWithApiPrefix {
-                                self.receiveResponseWith404Retry(from: targetConnection, originalConnection: originalConnection, 
-                                                                 method: method, path: path, version: version, 
-                                                                 headers: headers, body: body)
-                            } else {
-                                self.receiveResponse(from: targetConnection, originalConnection: originalConnection)
-                            }
-                        }
-                    }))
-                }
-                
+                })
             case .failed(let error):
-                NSLog("[ThinkingProxy] Target connection failed: \(error)")
-                self.sendError(to: originalConnection, statusCode: 502, message: "Bad Gateway")
-                targetConnection.cancel()
-                
-            default:
-                break
+                NSLog("[ThinkingProxy] Primary connection failed: \(error); trying next provider")
+                targetConn.cancel()
+                self.forwardWithFallback(method: method, path: path, version: version,
+                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
+            default: break
             }
         }
-        
-        targetConnection.start(queue: .global(qos: .userInitiated))
+        targetConn.start(queue: .global(qos: .userInitiated))
     }
-    
-    /**
-     Receives response and retries with /api/ prefix on 404
-     */
-    private func receiveResponseWith404Retry(from targetConnection: NWConnection, originalConnection: NWConnection, 
-                                             method: String, path: String, version: String, 
-                                             headers: [(String, String)], body: String) {
-        targetConnection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
-            
+
+    /// Forwards directly to an Ollama or OpenAI-compatible provider with fallback-aware response checking.
+    private func forwardDirectWithFallback(
+        provider: FallbackProvider,
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        originalConnection: NWConnection,
+        providerIndex: Int
+    ) {
+        let tryNext = { [weak self] in
+            guard let self else { return }
+            self.forwardWithFallback(method: method, path: path, version: version,
+                                     headers: headers, body: body, thinkingEnabled: false,
+                                     originalConnection: originalConnection, providerIndex: providerIndex + 1)
+        }
+
+        guard let baseURLString = provider.baseURL,
+              let baseURL = URL(string: baseURLString) else {
+            NSLog("[ThinkingProxy] Provider[\(providerIndex)] has no valid base URL; skipping")
+            tryNext(); return
+        }
+
+        let host = baseURL.host ?? "localhost"
+        let isHTTPS = baseURL.scheme?.lowercased() == "https"
+        let defaultPort: UInt16 = isHTTPS ? 443 : 80
+        let portNumber = UInt16(baseURL.port ?? Int(defaultPort))
+        guard let nwPort = NWEndpoint.Port(rawValue: portNumber) else {
+            NSLog("[ThinkingProxy] Provider[\(providerIndex)] invalid port; skipping")
+            tryNext(); return
+        }
+
+        let parameters: NWParameters = isHTTPS
+            ? NWParameters(tls: NWProtocolTLS.Options(), tcp: NWProtocolTCP.Options())
+            : NWParameters.tcp
+
+        // Substitute fallback model into request body if configured
+        var effectiveBody = body
+        if let fallbackModel = provider.fallbackModel, !fallbackModel.isEmpty,
+           let rewritten = rewriteModel(in: body, to: fallbackModel) {
+            NSLog("[ThinkingProxy] Provider[\(providerIndex)] substituting model → \(fallbackModel)")
+            effectiveBody = rewritten
+        }
+
+        // Map the inbound /v1/... path onto the provider's base path
+        let basePath = baseURL.path.hasSuffix("/") ? String(baseURL.path.dropLast()) : baseURL.path
+        let effectivePath: String
+        if path.starts(with: "/v1/") || path.starts(with: "/api/v1/") {
+            let stripped = path.starts(with: "/api/v1/") ? String(path.dropFirst(4)) : path
+            effectivePath = basePath.isEmpty ? stripped : basePath + stripped
+        } else {
+            effectivePath = basePath.isEmpty ? "/v1/chat/completions" : basePath + "/chat/completions"
+        }
+
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
+        let targetConn = NWConnection(to: endpoint, using: parameters)
+
+        targetConn.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                let requestData = self.buildDirectRequestData(
+                    method: method, path: effectivePath, version: version,
+                    headers: headers, body: effectiveBody,
+                    host: host, apiKey: provider.apiKey
+                )
+                targetConn.send(content: requestData, completion: .contentProcessed { error in
+                    if let error = error {
+                        NSLog("[ThinkingProxy] Direct send error to [\(providerIndex)]: \(error); trying next")
+                        targetConn.cancel(); tryNext()
+                    } else {
+                        self.receiveResponseWithFallbackCheck(
+                            from: targetConn, originalConnection: originalConnection,
+                            method: method, path: path, version: version,
+                            headers: headers, body: body, thinkingEnabled: false,
+                            providerIndex: providerIndex, retryWithApiPrefix: false
+                        )
+                    }
+                })
+            case .failed(let error):
+                NSLog("[ThinkingProxy] Direct connection to provider[\(providerIndex)] failed: \(error); trying next")
+                targetConn.cancel(); tryNext()
+            default: break
+            }
+        }
+        targetConn.start(queue: .global(qos: .userInitiated))
+    }
+
+    /// Reads the first chunk from a provider, inspects the HTTP status, and either
+    /// falls back to the next provider or streams the response to the client.
+    private func receiveResponseWithFallbackCheck(
+        from targetConn: NWConnection,
+        originalConnection: NWConnection,
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        thinkingEnabled: Bool,
+        providerIndex: Int,
+        retryWithApiPrefix: Bool
+    ) {
+        targetConn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+
             if let error = error {
-                NSLog("[ThinkingProxy] Receive error: \(error)")
-                targetConnection.cancel()
-                originalConnection.cancel()
+                NSLog("[ThinkingProxy] Receive error from provider[\(providerIndex)]: \(error); trying next")
+                targetConn.cancel()
+                self.forwardWithFallback(method: method, path: path, version: version,
+                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
                 return
             }
-            
-            if let data = data, !data.isEmpty {
-                // Check if response is a 404
-                if let responseString = String(data: data, encoding: .utf8) {
-                    // Log first 200 chars to debug
-                    let preview = String(responseString.prefix(200))
-                    NSLog("[ThinkingProxy] Response preview for \(path): \(preview)")
-                    
-                    // Check for 404 in status line OR in body
-                    let is404 = responseString.contains("HTTP/1.1 404") || 
-                               responseString.contains("HTTP/1.0 404") ||
-                               responseString.contains("404 page not found")
-                    
-                    if is404 {
-                        // Check if path doesn't already start with /api/
-                        if !path.starts(with: "/api/") && !path.starts(with: "/v1/") {
-                            NSLog("[ThinkingProxy] Got 404 for \(path), retrying with /api prefix")
-                            targetConnection.cancel()
-                            
-                            // Retry with /api/ prefix
-                            let newPath = "/api" + path
-                            self.forwardRequest(method: method, path: newPath, version: version, headers: headers, 
-                                              body: body, originalConnection: originalConnection, retryWithApiPrefix: false)
-                            return
-                        }
-                    }
+
+            guard let data, !data.isEmpty else {
+                if isComplete {
+                    NSLog("[ThinkingProxy] Empty response from provider[\(providerIndex)]; trying next")
+                    targetConn.cancel()
+                    self.forwardWithFallback(method: method, path: path, version: version,
+                                             headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                             originalConnection: originalConnection, providerIndex: providerIndex + 1)
                 }
-                
-                // Not a 404 or already has /api/, forward response as-is
-                originalConnection.send(content: data, completion: .contentProcessed({ sendError in
-                    if let sendError = sendError {
-                        NSLog("[ThinkingProxy] Send error: \(sendError)")
-                    }
-                    
-                    if isComplete {
-                        targetConnection.cancel()
-                        originalConnection.send(content: nil, isComplete: true, completion: .contentProcessed({ _ in
-                            originalConnection.cancel()
-                        }))
-                    } else {
-                        // Continue streaming
-                        self.streamNextChunk(from: targetConnection, to: originalConnection)
-                    }
-                }))
-            } else if isComplete {
-                targetConnection.cancel()
-                originalConnection.send(content: nil, isComplete: true, completion: .contentProcessed({ _ in
-                    originalConnection.cancel()
-                }))
+                return
             }
+
+            let snippet = String(data: data, encoding: .utf8) ?? ""
+
+            // 404 path-normalisation retry (primary only)
+            if retryWithApiPrefix && providerIndex == 0 {
+                let is404 = snippet.contains("HTTP/1.1 404") || snippet.contains("HTTP/1.0 404")
+                             || snippet.contains("404 page not found")
+                if is404, !path.starts(with: "/api/"), !path.starts(with: "/v1/") {
+                    NSLog("[ThinkingProxy] 404 from primary for \(path); retrying with /api prefix")
+                    targetConn.cancel()
+                    self.forwardToPrimaryWithFallback(
+                        method: method, path: "/api" + path, version: version,
+                        headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                        originalConnection: originalConnection, providerIndex: providerIndex,
+                        retryWithApiPrefix: false
+                    )
+                    return
+                }
+            }
+
+            // Fallback trigger check
+            let httpStatus = self.parseHTTPStatus(from: snippet)
+            let shouldFallback: Bool
+            if let status = httpStatus {
+                shouldFallback = FallbackTrigger.shouldFallback(httpStatus: status)
+                               || FallbackTrigger.shouldFallback(onBodySnippet: snippet)
+            } else {
+                shouldFallback = FallbackTrigger.shouldFallback(onBodySnippet: snippet)
+            }
+
+            if shouldFallback && providerIndex + 1 < self.fallbackChain.count {
+                let statusStr = httpStatus.map { "\($0)" } ?? "unknown"
+                NSLog("[ThinkingProxy] HTTP \(statusStr) from provider[\(providerIndex)] (\(self.fallbackChain[providerIndex].label)); falling back to [\(providerIndex + 1)]")
+                targetConn.cancel()
+                self.forwardWithFallback(method: method, path: path, version: version,
+                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
+                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
+                return
+            }
+
+            // No fallback — forward the already-received first chunk, then stream the rest
+            originalConnection.send(content: data, completion: .contentProcessed { sendError in
+                if let sendError = sendError {
+                    NSLog("[ThinkingProxy] Send response error: \(sendError)")
+                }
+                if isComplete {
+                    targetConn.cancel()
+                    originalConnection.send(content: nil, isComplete: true,
+                                            completion: .contentProcessed { _ in originalConnection.cancel() })
+                } else {
+                    self.streamNextChunk(from: targetConn, to: originalConnection)
+                }
+            })
         }
     }
-    
+
+    // MARK: - Request builders
+
+    private func buildPrimaryRequestData(
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        thinkingEnabled: Bool
+    ) -> Data {
+        var request = "\(method) \(path) \(version)\r\n"
+        let excluded: Set<String> = ["content-length", "host", "transfer-encoding"]
+        var existingBeta: String?
+        for (name, value) in headers {
+            let lower = name.lowercased()
+            if excluded.contains(lower) { continue }
+            if lower == "anthropic-beta" { existingBeta = value; continue }
+            request += "\(name): \(value)\r\n"
+        }
+        if thinkingEnabled {
+            let betaValue: String
+            if let existing = existingBeta, !existing.contains(BetaHeaders.interleavedThinking) {
+                betaValue = "\(existing),\(BetaHeaders.interleavedThinking)"
+            } else {
+                betaValue = existingBeta ?? BetaHeaders.interleavedThinking
+            }
+            request += "anthropic-beta: \(betaValue)\r\n"
+        } else if let existing = existingBeta {
+            request += "anthropic-beta: \(existing)\r\n"
+        }
+        request += "Host: \(targetHost):\(targetPort)\r\n"
+        request += "Connection: close\r\n"
+        request += "Content-Length: \(body.utf8.count)\r\n\r\n"
+        request += body
+        return request.data(using: .utf8) ?? Data()
+    }
+
+    private func buildDirectRequestData(
+        method: String, path: String, version: String,
+        headers: [(String, String)], body: String,
+        host: String, apiKey: String?
+    ) -> Data {
+        var request = "\(method) \(path) \(version)\r\n"
+        let excluded: Set<String> = ["host", "content-length", "connection", "transfer-encoding",
+                                     "authorization", "x-api-key"]
+        for (name, value) in headers {
+            if excluded.contains(name.lowercased()) { continue }
+            request += "\(name): \(value)\r\n"
+        }
+        if let key = apiKey, !key.isEmpty {
+            request += "Authorization: Bearer \(key)\r\n"
+        }
+        request += "Host: \(host)\r\n"
+        request += "Connection: close\r\n"
+        request += "Content-Type: application/json\r\n"
+        request += "Content-Length: \(body.utf8.count)\r\n\r\n"
+        request += body
+        return request.data(using: .utf8) ?? Data()
+    }
+
+    // MARK: - Helpers
+
+    /// Parses the HTTP status code from the first line of an HTTP response snippet.
+    private func parseHTTPStatus(from snippet: String) -> Int? {
+        guard snippet.hasPrefix("HTTP/") else { return nil }
+        let line = snippet.components(separatedBy: "\r\n").first ?? ""
+        let parts = line.components(separatedBy: " ")
+        guard parts.count >= 2, let status = Int(parts[1]) else { return nil }
+        return status
+    }
+
+    /// Rewrites the `model` field in a JSON request body string.
+    private func rewriteModel(in jsonString: String, to model: String) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        json["model"] = model
+        guard let out = try? JSONSerialization.data(withJSONObject: json),
+              let result = String(data: out, encoding: .utf8) else { return nil }
+        return result
+    }
+
     /**
-     Receives response from CLIProxyAPI
-     Starts the streaming loop for response data
+     Receives response from a target connection.
+     Starts the streaming loop for response data.
      */
     private func receiveResponse(from targetConnection: NWConnection, originalConnection: NWConnection) {
-        // Start the streaming loop
         streamNextChunk(from: targetConnection, to: originalConnection)
     }
     

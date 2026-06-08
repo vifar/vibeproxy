@@ -66,6 +66,9 @@ class ServerManager: ObservableObject {
         }
     }
 
+    /// Fallback provider chain — persisted, observed by ThinkingProxy.
+    let fallbackChainStore = FallbackChainStore()
+
     /// Vercel AI Gateway configuration for Claude requests
     @Published var vercelGatewayEnabled: Bool = false {
         didSet {
@@ -80,6 +83,7 @@ class ServerManager: ObservableObject {
         }
     }
     var onVercelConfigChanged: (() -> Void)?
+    var onFallbackChainChanged: (() -> Void)?
 
     /// Helper class to capture output text across closures
     private class OutputCapture {
@@ -141,6 +145,9 @@ class ServerManager: ObservableObject {
         vercelApiKey = UserDefaults.standard.string(forKey: "vercelApiKey") ?? ""
         reloadCustomProviders()
         markObservedConfigInputsCurrent()
+        // Push initial chain into ThinkingProxy (AppDelegate sets onVercelConfigChanged
+        // and we reuse that mechanism; a dedicated callback is set in AppDelegate).
+        onFallbackChainChanged?()
     }
 
     /// Check if a provider is enabled (defaults to true if not set)
@@ -868,7 +875,8 @@ class ServerManager: ObservableObject {
                 baseConfigRoot: baseConfig.root,
                 enabledProviderStates: enabledProviderStates
             ),
-            managedZAIProviderName: ProviderCatalog.managedZAIProviderName
+            managedZAIProviderName: ProviderCatalog.managedZAIProviderName,
+            ollamaFallbackModels: ollamaModelsFromChain()
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)
@@ -897,6 +905,15 @@ class ServerManager: ObservableObject {
     
     func getLogs() -> [String] {
         return logBuffer.elements()
+    }
+
+    /// Returns the unique set of model names to register with cli-proxy-api-plus
+    /// for any Ollama providers in the fallback chain.
+    private func ollamaModelsFromChain() -> [String] {
+        fallbackChainStore.providers
+            .filter { $0.kind == .ollama }
+            .compactMap { $0.fallbackModel }
+            .filter { !$0.isEmpty }
     }
     
     /// Kill any orphaned cli-proxy-api-plus processes that might be running

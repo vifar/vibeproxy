@@ -3,6 +3,11 @@ import Foundation
 enum ProviderCatalog {
     static let managedZAIProviderName = "zai"
 
+    // MARK: - Ollama
+    static let ollamaProviderKey = "ollama"
+    static let ollamaDefaultBaseURL = "http://localhost:11434/v1"
+    static let ollamaHealthCheckURL = "http://localhost:11434/api/tags"
+
     /// OAuth provider keys used in config.yaml oauth-excluded-models.
     static let oauthProviderKeys: [String: String] = [
         "claude": "claude",

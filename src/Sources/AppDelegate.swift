@@ -40,6 +40,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         serverManager.onVercelConfigChanged = { [weak self] in
             self?.syncVercelConfig()
         }
+
+        // Sync fallback chain from ServerManager to ThinkingProxy
+        syncFallbackChain()
+        serverManager.onFallbackChainChanged = { [weak self] in
+            self?.syncFallbackChain()
+        }
         
         // Warm commonly used icons to avoid first-use disk hits
         preloadIcons()
@@ -516,6 +522,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             enabled: serverManager.vercelGatewayEnabled,
             apiKey: serverManager.vercelApiKey
         )
+    }
+
+    // MARK: - Fallback Chain Sync
+
+    private func syncFallbackChain() {
+        thinkingProxy.fallbackChain = serverManager.fallbackChainStore.providers
     }
 
     // MARK: - UNUserNotificationCenterDelegate

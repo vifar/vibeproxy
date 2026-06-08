@@ -109,6 +109,178 @@ struct VercelGatewayControls: View {
     }
 }
 
+// MARK: - Fallback Chain UI
+
+/// Inline section embedded in the Settings Form showing the ordered fallback chain.
+struct FallbackChainSection: View {
+    @ObservedObject var store: FallbackChainStore
+    @State private var showingAddSheet = false
+    @State private var newKind: FallbackProvider.Kind = .ollama
+    @State private var newLabel = "Ollama (local)"
+    @State private var newBaseURL = ProviderCatalog.ollamaDefaultBaseURL
+    @State private var newApiKey = ""
+    @State private var newModel = "llama3.2"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Providers are tried in order. If one returns an error or quota limit, the next is used.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 4)
+
+            ForEach(Array(store.providers.enumerated()), id: \.offset) { index, provider in
+                HStack(spacing: 8) {
+                    // Reorder buttons
+                    VStack(spacing: 0) {
+                        Button { store.move(from: IndexSet(integer: index), to: index - 1) } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index <= 1)
+                        Button { store.move(from: IndexSet(integer: index), to: index + 2) } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index == 0 || index == store.providers.count - 1)
+                    }
+                    .font(.caption)
+
+                    Image(systemName: iconName(for: provider))
+                        .frame(width: 16)
+                        .foregroundColor(index == 0 ? .accentColor : .secondary)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(provider.label)
+                            .font(.caption)
+                        if let url = provider.baseURL {
+                            Text(url)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        if let model = provider.fallbackModel {
+                            Text("Model: \(model)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if index > 0 {
+                        Button { store.remove(at: index) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+
+                if index < store.providers.count - 1 {
+                    Divider()
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("+ Add Ollama") {
+                    store.append(.defaultOllama())
+                }
+                .controlSize(.small)
+
+                Button("+ Add OpenAI-compatible") {
+                    newKind = .openaiCompatible
+                    newLabel = ""
+                    newBaseURL = ""
+                    newApiKey = ""
+                    newModel = ""
+                    showingAddSheet = true
+                }
+                .controlSize(.small)
+            }
+            .padding(.top, 4)
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            AddOpenAIProviderSheet(
+                label: $newLabel,
+                baseURL: $newBaseURL,
+                apiKey: $newApiKey,
+                model: $newModel,
+                onAdd: {
+                    store.append(FallbackProvider(
+                        kind: .openaiCompatible,
+                        label: newLabel.isEmpty ? newBaseURL : newLabel,
+                        baseURL: newBaseURL,
+                        apiKey: newApiKey.isEmpty ? nil : newApiKey,
+                        fallbackModel: newModel.isEmpty ? nil : newModel
+                    ))
+                    showingAddSheet = false
+                },
+                onCancel: { showingAddSheet = false }
+            )
+        }
+    }
+
+    private func iconName(for provider: FallbackProvider) -> String {
+        switch provider.kind {
+        case .primary: return "network"
+        case .ollama:  return "desktopcomputer"
+        case .openaiCompatible: return "server.rack"
+        }
+    }
+}
+
+/// Sheet for adding a new OpenAI-compatible fallback provider.
+struct AddOpenAIProviderSheet: View {
+    @Binding var label: String
+    @Binding var baseURL: String
+    @Binding var apiKey: String
+    @Binding var model: String
+    var onAdd: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add OpenAI-Compatible Provider")
+                .font(.headline)
+
+            Group {
+                LabeledContent("Label") {
+                    TextField("e.g. OpenRouter", text: $label)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                }
+                LabeledContent("Base URL") {
+                    TextField("https://openrouter.ai/api/v1", text: $baseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                }
+                LabeledContent("API Key") {
+                    SecureField("Optional", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                }
+                LabeledContent("Fallback Model") {
+                    TextField("e.g. gpt-4o", text: $model)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                }
+            }
+            .font(.caption)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add", action: onAdd)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(baseURL.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+    }
+}
+
 /// A row displaying a service with its connected accounts and add button
 struct ServiceRow<ExtraContent: View>: View {
     let serviceType: ServiceType
@@ -738,6 +910,10 @@ struct SettingsView: View {
                 }
                 
                 if !serverManager.customProviders.isEmpty {
+                    Section("Fallback Chain") {
+                        FallbackChainSection(store: serverManager.fallbackChainStore)
+                    }
+
                     Section("Custom Providers") {
                         ForEach(serverManager.customProviders) { provider in
                             CustomProviderRow(

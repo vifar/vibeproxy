@@ -153,7 +153,8 @@ enum ConfigComposer {
         zaiAPIKeys: [String],
         customProviderAuthRecords: [ConfigProviderAuthRecord],
         includeManagedZAIProvider: Bool,
-        managedZAIProviderName: String = "zai"
+        managedZAIProviderName: String = "zai",
+        ollamaFallbackModels: [String] = []
     ) -> [String: Any] {
         var mergedRoot = baseRoot
         
@@ -217,7 +218,11 @@ enum ConfigComposer {
                 mergedOpenAICompatibility.append(managedZAIEntry)
             }
         }
-        
+
+        if !ollamaFallbackModels.isEmpty {
+            mergedOpenAICompatibility.append(makeOllamaProviderEntry(models: ollamaFallbackModels))
+        }
+
         if mergedOpenAICompatibility.isEmpty {
             mergedRoot.removeValue(forKey: "openai-compatibility")
         } else {
@@ -388,6 +393,15 @@ enum ConfigComposer {
         return merged.isEmpty ? nil : merged
     }
     
+    private static func makeOllamaProviderEntry(models: [String]) -> [String: Any] {
+        var entry: [String: Any] = [
+            "name": ProviderCatalog.ollamaProviderKey,
+            "base-url": ProviderCatalog.ollamaDefaultBaseURL
+        ]
+        entry["models"] = models.map { ["name": $0, "alias": $0] }
+        return entry
+    }
+
     private static func makeZAIProviderEntry(baseEntry: [String: Any]?, apiKeys: [String]) -> [String: Any] {
         var entry = stripCustomProviderUIMetadata(from: baseEntry ?? [:])
         entry["name"] = "zai"
