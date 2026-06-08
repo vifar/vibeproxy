@@ -911,7 +911,7 @@ class ServerManager: ObservableObject {
     /// for any Ollama providers in the fallback chain.
     private func ollamaModelsFromChain() -> [String] {
         fallbackChainStore.providers
-            .filter { $0.kind == .ollama }
+            .filter { $0.kind == .ollamaCloud }
             .compactMap { $0.fallbackModel }
             .filter { !$0.isEmpty }
     }

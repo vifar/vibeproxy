@@ -115,11 +115,11 @@ struct VercelGatewayControls: View {
 struct FallbackChainSection: View {
     @ObservedObject var store: FallbackChainStore
     @State private var showingAddSheet = false
-    @State private var newKind: FallbackProvider.Kind = .ollama
-    @State private var newLabel = "Ollama (local)"
+    @State private var newKind: FallbackProvider.Kind = .ollamaCloud
+    @State private var newLabel = "Ollama Cloud"
     @State private var newBaseURL = ProviderCatalog.ollamaDefaultBaseURL
     @State private var newApiKey = ""
-    @State private var newModel = "llama3.2"
+    @State private var newModel = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -182,8 +182,13 @@ struct FallbackChainSection: View {
             }
 
             HStack(spacing: 8) {
-                Button("+ Add Ollama") {
-                    store.append(.defaultOllama())
+                Button("+ Add Ollama Cloud") {
+                    newKind = .ollamaCloud
+                    newLabel = "Ollama Cloud"
+                    newBaseURL = ProviderCatalog.ollamaDefaultBaseURL
+                    newApiKey = ""
+                    newModel = ""
+                    showingAddSheet = true
                 }
                 .controlSize(.small)
 
@@ -207,7 +212,7 @@ struct FallbackChainSection: View {
                 model: $newModel,
                 onAdd: {
                     store.append(FallbackProvider(
-                        kind: .openaiCompatible,
+                        kind: newKind,
                         label: newLabel.isEmpty ? newBaseURL : newLabel,
                         baseURL: newBaseURL,
                         apiKey: newApiKey.isEmpty ? nil : newApiKey,
@@ -222,8 +227,8 @@ struct FallbackChainSection: View {
 
     private func iconName(for provider: FallbackProvider) -> String {
         switch provider.kind {
-        case .primary: return "network"
-        case .ollama:  return "desktopcomputer"
+        case .primary:          return "network"
+        case .ollamaCloud:      return "cloud"
         case .openaiCompatible: return "server.rack"
         }
     }
@@ -240,7 +245,7 @@ struct AddOpenAIProviderSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Add OpenAI-Compatible Provider")
+            Text(label == "Ollama Cloud" ? "Add Ollama Cloud" : "Add OpenAI-Compatible Provider")
                 .font(.headline)
 
             Group {

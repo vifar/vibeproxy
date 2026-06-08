@@ -726,7 +726,7 @@ class ThinkingProxy {
                 headers: headers, body: body, thinkingEnabled: thinkingEnabled,
                 originalConnection: originalConnection, providerIndex: providerIndex
             )
-        case .ollama, .openaiCompatible:
+        case .ollamaCloud, .openaiCompatible:
             forwardDirectWithFallback(
                 provider: provider,
                 method: method, path: path, version: version,

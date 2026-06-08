@@ -5,18 +5,18 @@ struct FallbackProvider: Codable, Equatable {
     enum Kind: String, Codable {
         /// Routes through the bundled cli-proxy-api-plus (all OAuth/ZAI/custom providers).
         case primary
-        /// Direct connection to a local Ollama daemon (no API key, plain HTTP).
-        case ollama
-        /// Any OpenAI-compatible endpoint reached directly by ThinkingProxy.
+        /// Direct HTTPS connection to Ollama's cloud API (https://ollama.com/v1).
+        case ollamaCloud
+        /// Any other OpenAI-compatible HTTPS endpoint reached directly by ThinkingProxy.
         case openaiCompatible
     }
 
     var kind: Kind
     /// Human-readable label shown in Settings.
     var label: String
-    /// Base URL for `ollama` and `openaiCompatible`; nil for `primary`.
+    /// Base URL; nil for `primary`.
     var baseURL: String?
-    /// API key for `openaiCompatible`; nil for `primary` and `ollama`.
+    /// Bearer API key; nil for `primary`.
     var apiKey: String?
     /// Model name to substitute into the request body when this provider is used.
     /// If nil, the original model name from the client request is left unchanged.
@@ -32,13 +32,13 @@ struct FallbackProvider: Codable, Equatable {
         fallbackModel: nil
     )
 
-    static func defaultOllama(model: String = "llama3.2") -> FallbackProvider {
+    static func defaultOllamaCloud(apiKey: String = "", model: String = "") -> FallbackProvider {
         FallbackProvider(
-            kind: .ollama,
-            label: "Ollama (local)",
+            kind: .ollamaCloud,
+            label: "Ollama Cloud",
             baseURL: ProviderCatalog.ollamaDefaultBaseURL,
-            apiKey: nil,
-            fallbackModel: model
+            apiKey: apiKey.isEmpty ? nil : apiKey,
+            fallbackModel: model.isEmpty ? nil : model
         )
     }
 }
