@@ -151,6 +151,8 @@ enum ConfigComposer {
         disabledCustomProviderIDs: Set<String>,
         disabledOAuthProviderKeys: [String],
         zaiAPIKeys: [String],
+        ollamaAPIKeys: [String] = [],
+        ollamaModels: [String] = [],
         customProviderAuthRecords: [ConfigProviderAuthRecord],
         includeManagedZAIProvider: Bool,
         managedZAIProviderName: String = "zai",
@@ -219,8 +221,16 @@ enum ConfigComposer {
             }
         }
 
-        if !ollamaFallbackModels.isEmpty {
-            mergedOpenAICompatibility.append(makeOllamaProviderEntry(models: ollamaFallbackModels))
+        if !ollamaAPIKeys.isEmpty {
+            mergedOpenAICompatibility.append(makeOllamaProviderEntry(
+                apiKeys: ollamaAPIKeys,
+                models: ollamaModels
+            ))
+        } else if !ollamaFallbackModels.isEmpty {
+            mergedOpenAICompatibility.append(makeOllamaProviderEntry(
+                apiKeys: [],
+                models: ollamaFallbackModels
+            ))
         }
 
         if mergedOpenAICompatibility.isEmpty {
@@ -393,12 +403,20 @@ enum ConfigComposer {
         return merged.isEmpty ? nil : merged
     }
     
-    private static func makeOllamaProviderEntry(models: [String]) -> [String: Any] {
+    private static func makeOllamaProviderEntry(
+        apiKeys: [String],
+        models: [String]
+    ) -> [String: Any] {
         var entry: [String: Any] = [
             "name": ProviderCatalog.ollamaProviderKey,
             "base-url": ProviderCatalog.ollamaDefaultBaseURL
         ]
-        entry["models"] = models.map { ["name": $0, "alias": $0] }
+        entry["models"] = models.filter { !$0.isEmpty }.map { ["name": $0, "alias": $0] }
+        if !apiKeys.isEmpty {
+            entry["api-key-entries"] = deduplicatedAPIKeyEntries(
+                apiKeys.map { ["api-key": $0] }
+            )
+        }
         return entry
     }
 

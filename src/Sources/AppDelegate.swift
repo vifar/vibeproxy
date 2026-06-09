@@ -41,12 +41,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             self?.syncVercelConfig()
         }
 
-        // Sync fallback chain from ServerManager to ThinkingProxy
-        syncFallbackChain()
-        serverManager.onFallbackChainChanged = { [weak self] in
-            self?.syncFallbackChain()
-        }
-        
         // Warm commonly used icons to avoid first-use disk hits
         preloadIcons()
         
@@ -208,7 +202,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
 
     func createSettingsWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 900),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -522,12 +516,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             enabled: serverManager.vercelGatewayEnabled,
             apiKey: serverManager.vercelApiKey
         )
-    }
-
-    // MARK: - Fallback Chain Sync
-
-    private func syncFallbackChain() {
-        thinkingProxy.fallbackChain = serverManager.fallbackChainStore.providers
     }
 
     // MARK: - UNUserNotificationCenterDelegate

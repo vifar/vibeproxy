@@ -9,7 +9,7 @@ struct AccountRowView: View {
     let isLastEnabled: Bool
     let onToggleDisabled: () -> Void
     let onRemove: () -> Void
-    
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
@@ -67,7 +67,7 @@ struct AccountRowView: View {
 struct VercelGatewayControls: View {
     @ObservedObject var serverManager: ServerManager
     @State private var showingSaved = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: $serverManager.vercelGatewayEnabled) {
@@ -76,7 +76,7 @@ struct VercelGatewayControls: View {
             }
             .toggleStyle(.checkbox)
             .help("Route Claude requests through Vercel AI Gateway for safer access to your Claude Max subscription")
-            
+
             if serverManager.vercelGatewayEnabled {
                 HStack(spacing: 8) {
                     Text("Vercel API key")
@@ -86,7 +86,7 @@ struct VercelGatewayControls: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
                         .font(.caption)
-                    
+
                     if showingSaved {
                         Text("Saved")
                             .font(.caption)
@@ -106,183 +106,6 @@ struct VercelGatewayControls: View {
         }
         .padding(.leading, 28)
         .padding(.top, 4)
-    }
-}
-
-// MARK: - Fallback Chain UI
-
-/// Inline section embedded in the Settings Form showing the ordered fallback chain.
-struct FallbackChainSection: View {
-    @ObservedObject var store: FallbackChainStore
-    @State private var showingAddSheet = false
-    @State private var newKind: FallbackProvider.Kind = .ollamaCloud
-    @State private var newLabel = "Ollama Cloud"
-    @State private var newBaseURL = ProviderCatalog.ollamaDefaultBaseURL
-    @State private var newApiKey = ""
-    @State private var newModel = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Providers are tried in order. If one returns an error or quota limit, the next is used.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 4)
-
-            ForEach(Array(store.providers.enumerated()), id: \.offset) { index, provider in
-                HStack(spacing: 8) {
-                    // Reorder buttons
-                    VStack(spacing: 0) {
-                        Button { store.move(from: IndexSet(integer: index), to: index - 1) } label: {
-                            Image(systemName: "chevron.up")
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(index <= 1)
-                        Button { store.move(from: IndexSet(integer: index), to: index + 2) } label: {
-                            Image(systemName: "chevron.down")
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(index == 0 || index == store.providers.count - 1)
-                    }
-                    .font(.caption)
-
-                    Image(systemName: iconName(for: provider))
-                        .frame(width: 16)
-                        .foregroundColor(index == 0 ? .accentColor : .secondary)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(provider.label)
-                            .font(.caption)
-                        if let url = provider.baseURL {
-                            Text(url)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        if let model = provider.fallbackModel {
-                            Text("Model: \(model)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    Spacer()
-
-                    if index > 0 {
-                        Button { store.remove(at: index) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.vertical, 2)
-
-                if index < store.providers.count - 1 {
-                    Divider()
-                }
-            }
-
-            HStack(spacing: 8) {
-                Button("+ Add Ollama Cloud") {
-                    newKind = .ollamaCloud
-                    newLabel = "Ollama Cloud"
-                    newBaseURL = ProviderCatalog.ollamaDefaultBaseURL
-                    newApiKey = ""
-                    newModel = ""
-                    showingAddSheet = true
-                }
-                .controlSize(.small)
-
-                Button("+ Add OpenAI-compatible") {
-                    newKind = .openaiCompatible
-                    newLabel = ""
-                    newBaseURL = ""
-                    newApiKey = ""
-                    newModel = ""
-                    showingAddSheet = true
-                }
-                .controlSize(.small)
-            }
-            .padding(.top, 4)
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            AddOpenAIProviderSheet(
-                label: $newLabel,
-                baseURL: $newBaseURL,
-                apiKey: $newApiKey,
-                model: $newModel,
-                onAdd: {
-                    store.append(FallbackProvider(
-                        kind: newKind,
-                        label: newLabel.isEmpty ? newBaseURL : newLabel,
-                        baseURL: newBaseURL,
-                        apiKey: newApiKey.isEmpty ? nil : newApiKey,
-                        fallbackModel: newModel.isEmpty ? nil : newModel
-                    ))
-                    showingAddSheet = false
-                },
-                onCancel: { showingAddSheet = false }
-            )
-        }
-    }
-
-    private func iconName(for provider: FallbackProvider) -> String {
-        switch provider.kind {
-        case .primary:          return "network"
-        case .ollamaCloud:      return "cloud"
-        case .openaiCompatible: return "server.rack"
-        }
-    }
-}
-
-/// Sheet for adding a new OpenAI-compatible fallback provider.
-struct AddOpenAIProviderSheet: View {
-    @Binding var label: String
-    @Binding var baseURL: String
-    @Binding var apiKey: String
-    @Binding var model: String
-    var onAdd: () -> Void
-    var onCancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(label == "Ollama Cloud" ? "Add Ollama Cloud" : "Add OpenAI-Compatible Provider")
-                .font(.headline)
-
-            Group {
-                LabeledContent("Label") {
-                    TextField("e.g. OpenRouter", text: $label)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 240)
-                }
-                LabeledContent("Base URL") {
-                    TextField("https://openrouter.ai/api/v1", text: $baseURL)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 240)
-                }
-                LabeledContent("API Key") {
-                    SecureField("Optional", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 240)
-                }
-                LabeledContent("Fallback Model") {
-                    TextField("e.g. gpt-4o", text: $model)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 240)
-                }
-            }
-            .font(.caption)
-
-            HStack {
-                Spacer()
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button("Add", action: onAdd)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(baseURL.isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 400)
     }
 }
 
@@ -313,11 +136,11 @@ struct ServiceRow<ExtraContent: View>: View {
     private var activeCount: Int { accounts.filter { !$0.isExpired }.count }
     private var expiredCount: Int { accounts.filter { $0.isExpired }.count }
     private let removeColor = Color(red: 0xeb/255, green: 0x0f/255, blue: 0x0f/255)
-    
+
     private var displayTitle: String {
         customTitle ?? serviceType.displayName
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Header row
@@ -358,7 +181,7 @@ struct ServiceRow<ExtraContent: View>: View {
                     .controlSize(.small)
                 }
             }
-            
+
             // Account display (only shown when enabled)
             if isEnabled {
                 let enabledCount = accounts.filter { !$0.isDisabled }.count
@@ -455,7 +278,7 @@ struct CustomProviderCredentialRowView: View {
     let isLastEnabled: Bool
     let onToggleDisabled: () -> Void
     let onRemove: () -> Void
-    
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
@@ -514,16 +337,16 @@ struct CustomProviderRow: View {
     let onToggleDisabled: (CustomProviderCredential) -> Void
     let onToggleEnabled: (Bool) -> Void
     var onExpandChange: ((Bool) -> Void)? = nil
-    
+
     @State private var isExpanded = false
     @State private var credentialToRemove: CustomProviderCredential?
     @State private var showingRemoveConfirmation = false
-    
+
     private var enabledCredentialCount: Int { credentials.filter { !$0.isDisabled }.count }
     private var totalConfiguredKeyCount: Int { credentials.count + provider.inlineKeyCount }
     private var totalEnabledKeyCount: Int { enabledCredentialCount + provider.inlineKeyCount }
     private let removeColor = Color(red: 0xeb/255, green: 0x0f/255, blue: 0x0f/255)
-    
+
     private var summaryText: String {
         if totalConfiguredKeyCount == 0 {
             return "No configured API keys"
@@ -554,7 +377,7 @@ struct CustomProviderRow: View {
         }
         return "Models: \(provider.modelAliases.joined(separator: ", "))"
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -566,18 +389,18 @@ struct CustomProviderRow: View {
                 .controlSize(.mini)
                 .labelsHidden()
                 .help(isEnabled ? "Disable this provider" : "Enable this provider")
-                
+
                 Image(systemName: provider.effectiveIconSystemName)
                     .frame(width: 20, height: 20)
                     .foregroundColor(isEnabled ? .primary : .secondary)
                     .opacity(isEnabled ? 1.0 : 0.4)
-                
+
                 Text(provider.title)
                     .fontWeight(.medium)
                     .foregroundColor(isEnabled ? .primary : .secondary)
-                
+
                 Spacer()
-                
+
                 if isAuthenticating {
                     ProgressView()
                         .controlSize(.small)
@@ -588,20 +411,20 @@ struct CustomProviderRow: View {
                     .controlSize(.small)
                 }
             }
-            
+
             if isEnabled {
                 if totalConfiguredKeyCount > 0 {
                     HStack(spacing: 4) {
                         Text(summaryText)
                             .font(.caption)
                             .foregroundColor(.green)
-                        
+
                         if let poolingStatusText {
                             Text(poolingStatusText)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -613,7 +436,7 @@ struct CustomProviderRow: View {
                             isExpanded.toggle()
                         }
                     }
-                    
+
                     if isExpanded {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(endpointSummaryText)
@@ -634,7 +457,7 @@ struct CustomProviderRow: View {
                                     .foregroundColor(.secondary)
                                     .padding(.leading, 28)
                             }
-                            
+
                             ForEach(credentials) { credential in
                                 CustomProviderCredentialRowView(
                                     credential: credential,
@@ -695,10 +518,16 @@ struct SettingsView: View {
     @State private var qwenEmail = ""
     @State private var showingZaiApiKeyPrompt = false
     @State private var zaiApiKey = ""
+    @State private var showingOllamaApiKeyPrompt = false
+    @State private var ollamaApiKey = ""
+    @State private var ollamaFetchedModels: [String] = []
+    @State private var ollamaSelectedModels: Set<String> = []
+    @State private var ollamaIsFetching = false
+    @State private var ollamaFetchError: String? = nil
     @State private var selectedCustomProvider: CustomProviderDefinition?
     @State private var customProviderApiKey = ""
     @State private var expandedRowCount = 0
-    
+
     private enum Timing {
         static let serverRestartDelay: TimeInterval = 0.3
     }
@@ -711,8 +540,9 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
+        ScrollView {
+            VStack(spacing: 0) {
+                Form {
                 Section {
                     HStack {
                         Text("Server status")
@@ -912,13 +742,28 @@ struct SettingsView: View {
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("zai", enabled: enabled) },
                         onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
                     ) { EmptyView() }
-                }
-                
-                if !serverManager.customProviders.isEmpty {
-                    Section("Fallback Chain") {
-                        FallbackChainSection(store: serverManager.fallbackChainStore)
-                    }
 
+                    ServiceRow(
+                        serviceType: .ollama,
+                        iconName: "icon-ollama.png",
+                        iconSystemName: "cloud",
+                        accounts: authManager.accounts(for: .ollama),
+                        isAuthenticating: authenticatingService == .ollama,
+                        helpText: "Ollama Cloud provides access to large models like gpt-oss:120b without a local GPU. Get your key at ollama.com/settings/keys",
+                        isEnabled: serverManager.isProviderEnabled("ollama"),
+                        isToggleLocked: serverManager.isProviderToggleLocked("ollama"),
+                        toggleHelpText: serverManager.providerConfigLockReason("ollama"),
+                        disabledReasonText: serverManager.providerConfigLockReason("ollama"),
+                        customTitle: nil,
+                        onConnect: { showingOllamaApiKeyPrompt = true },
+                        onDisconnect: { account in disconnectAccount(account) },
+                        onToggleDisabled: { account in toggleAccountDisabled(account) },
+                        onToggleEnabled: { enabled in serverManager.setProviderEnabled("ollama", enabled: enabled) },
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                    ) { EmptyView() }
+                }
+
+                if !serverManager.customProviders.isEmpty {
                     Section("Custom Providers") {
                         ForEach(serverManager.customProviders) { provider in
                             CustomProviderRow(
@@ -999,7 +844,8 @@ struct SettingsView: View {
             }
             .padding(.bottom, 12)
         }
-        .frame(width: 480, height: 740)
+        }
+        .frame(width: 480)
         .sheet(isPresented: $showingQwenEmailPrompt) {
             VStack(spacing: 16) {
                 Text("Qwen Account Email")
@@ -1052,6 +898,107 @@ struct SettingsView: View {
             .padding(24)
             .frame(width: 400)
         }
+        .sheet(isPresented: $showingOllamaApiKeyPrompt, onDismiss: {
+            ollamaApiKey = ""
+            ollamaFetchedModels = []
+            ollamaSelectedModels = []
+            ollamaFetchError = nil
+        }) {
+            VStack(spacing: 16) {
+                Text("Ollama Cloud")
+                    .font(.headline)
+
+                if ollamaFetchedModels.isEmpty {
+                    // Step 1: Enter API key and fetch models
+                    Text("Enter your API key from ollama.com/settings/keys")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    SecureField("API key", text: $ollamaApiKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 300)
+
+                    if let error = ollamaFetchError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 300)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button("Cancel") {
+                            showingOllamaApiKeyPrompt = false
+                        }
+                        if ollamaIsFetching {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Button("Fetch Models") {
+                                fetchOllamaCloudModels(apiKey: ollamaApiKey)
+                            }
+                            .disabled(ollamaApiKey.isEmpty)
+                            .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                } else {
+                    // Step 2: Select models from fetched list
+                    HStack {
+                        Text("Select models to enable")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("All") { ollamaSelectedModels = Set(ollamaFetchedModels) }
+                            .font(.caption)
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                        Text("·").font(.caption).foregroundColor(.secondary)
+                        Button("None") { ollamaSelectedModels = [] }
+                            .font(.caption)
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                    }
+                    .frame(width: 300)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(ollamaFetchedModels, id: \.self) { model in
+                                HStack(spacing: 8) {
+                                    Toggle(isOn: Binding(
+                                        get: { ollamaSelectedModels.contains(model) },
+                                        set: { isOn in
+                                            if isOn { ollamaSelectedModels.insert(model) }
+                                            else { ollamaSelectedModels.remove(model) }
+                                        }
+                                    )) {
+                                        Text(model).font(.caption)
+                                    }
+                                    .toggleStyle(.checkbox)
+                                    Spacer()
+                                }
+                            }
+                        }
+                        .frame(width: 300)
+                    }
+                    .frame(maxHeight: 300)
+
+                    HStack(spacing: 12) {
+                        Button("Cancel") {
+                            showingOllamaApiKeyPrompt = false
+                        }
+                        Button("Save (\(ollamaSelectedModels.count) selected)") {
+                            showingOllamaApiKeyPrompt = false
+                            startOllamaAuth(apiKey: ollamaApiKey, models: Array(ollamaSelectedModels))
+                        }
+                        .disabled(ollamaSelectedModels.isEmpty)
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+            .padding(24)
+            .frame(width: 400)
+        }
         .sheet(item: $selectedCustomProvider, onDismiss: {
             customProviderApiKey = ""
         }) { provider in
@@ -1097,7 +1044,7 @@ struct SettingsView: View {
     }
 
     // MARK: - Actions
-    
+
     private func toggleAccountDisabled(_ account: AuthAccount) {
         if authManager.toggleAccountDisabled(account) {
             serverManager.refreshAuthBackedConfiguration()
@@ -1112,7 +1059,7 @@ struct SettingsView: View {
             showingAuthResult = true
         }
     }
-    
+
     private func openAuthFolder() {
         let authDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cli-proxy-api")
         NSWorkspace.shared.open(authDir)
@@ -1137,11 +1084,11 @@ struct SettingsView: View {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
     }
-    
+
     private func connectService(_ serviceType: ServiceType) {
         authenticatingService = serviceType
         NSLog("[SettingsView] Starting %@ authentication", serviceType.displayName)
-        
+
         let command: AuthCommand
         switch serviceType.connectionAction {
         case .authCommand(let authCommand):
@@ -1152,13 +1099,16 @@ struct SettingsView: View {
         case .promptForZAIAPIKey:
             authenticatingService = nil
             return // handled separately with API key prompt
+        case .promptForOllamaAPIKey:
+            authenticatingService = nil
+            return // handled separately with API key prompt
         }
-        
+
         serverManager.runAuthCommand(command) { success, output in
             NSLog("[SettingsView] Auth completed - success: %d, output: %@", success, output)
             DispatchQueue.main.async {
                 self.authenticatingService = nil
-                
+
                 if success {
                     self.authResultSuccess = true
                     // For Copilot, use the output which contains the device code
@@ -1176,7 +1126,7 @@ struct SettingsView: View {
             }
         }
     }
-    
+
     private func successMessage(for serviceType: ServiceType) -> String {
         switch serviceType {
         case .claude:
@@ -1195,19 +1145,21 @@ struct SettingsView: View {
             return "🌐 Browser opened for Antigravity authentication.\n\nPlease complete the login in your browser."
         case .zai:
             return "✓ Z.AI API key added successfully.\n\nYou can now use GLM models through the proxy."
+        case .ollama:
+            return "✓ Ollama Cloud API key added successfully.\n\nYou can now use Ollama Cloud models through the proxy."
         }
     }
-    
+
     private func startQwenAuth(email: String) {
         authenticatingService = .qwen
         NSLog("[SettingsView] Starting Qwen authentication")
-        
+
         serverManager.runAuthCommand(.qwenLogin(email: email)) { success, output in
             NSLog("[SettingsView] Auth completed - success: %d, output: %@", success, output)
             DispatchQueue.main.async {
                 self.authenticatingService = nil
                 self.qwenEmail = ""
-                
+
                 if success {
                     self.authResultSuccess = true
                     self.authResultMessage = self.successMessage(for: .qwen)
@@ -1220,17 +1172,17 @@ struct SettingsView: View {
             }
         }
     }
-    
+
     private func startZaiAuth(apiKey: String) {
         authenticatingService = .zai
         NSLog("[SettingsView] Adding Z.AI API key")
-        
+
         serverManager.saveZaiApiKey(apiKey) { success, output in
             NSLog("[SettingsView] Z.AI key save completed - success: %d, output: %@", success, output)
             DispatchQueue.main.async {
                 self.authenticatingService = nil
                 self.zaiApiKey = ""
-                
+
                 if success {
                     self.authResultSuccess = true
                     self.authResultMessage = self.successMessage(for: .zai)
@@ -1244,17 +1196,71 @@ struct SettingsView: View {
             }
         }
     }
-    
+
+    private func startOllamaAuth(apiKey: String, models: [String]) {
+        authenticatingService = .ollama
+        NSLog("[SettingsView] Adding Ollama Cloud API key with %d models", models.count)
+
+        serverManager.saveOllamaCloudAPIKey(apiKey, models: models) { success, output in
+            NSLog("[SettingsView] Ollama key save completed - success: %d, output: %@", success, output)
+            DispatchQueue.main.async {
+                self.authenticatingService = nil
+                self.ollamaApiKey = ""
+                self.ollamaFetchedModels = []
+                self.ollamaSelectedModels = []
+
+                if success {
+                    self.authResultSuccess = true
+                    self.authResultMessage = self.successMessage(for: .ollama)
+                    self.showingAuthResult = true
+                    self.authManager.checkAuthStatus()
+                } else {
+                    self.authResultSuccess = false
+                    self.authResultMessage = "Failed to save API key.\n\nDetails: \(output.isEmpty ? "Unknown error" : output)"
+                    self.showingAuthResult = true
+                }
+            }
+        }
+    }
+
+    private func fetchOllamaCloudModels(apiKey: String) {
+        ollamaIsFetching = true
+        ollamaFetchError = nil
+
+        Task {
+            let fetcher = OllamaCloudModelFetcher()
+            do {
+                let models = try await fetcher.fetchCloudModels(apiKey: apiKey)
+                await MainActor.run {
+                    self.ollamaFetchedModels = models
+                    self.ollamaSelectedModels = []
+                    self.ollamaIsFetching = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.ollamaIsFetching = false
+                    self.ollamaFetchError = error.localizedDescription
+                }
+            } catch {
+                await MainActor.run {
+                    self.ollamaIsFetching = false
+                    self.ollamaFetchError = "Unexpected error: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+
     private func startCustomProviderAuth(provider: CustomProviderDefinition, apiKey: String) {
         authenticatingCustomProviderID = provider.id
         NSLog("[SettingsView] Adding API key for custom provider %@", provider.id)
-        
+
         serverManager.saveCustomProviderAPIKey(providerID: provider.id, apiKey: apiKey) { success, output in
             NSLog("[SettingsView] Custom provider key save completed - success: %d, output: %@", success, output)
             DispatchQueue.main.async {
                 self.authenticatingCustomProviderID = nil
                 self.customProviderApiKey = ""
-                
+
                 if success {
                     self.authResultSuccess = true
                     switch output {
@@ -1278,7 +1284,7 @@ struct SettingsView: View {
             }
         }
     }
-    
+
     private func toggleCustomProviderCredential(provider: CustomProviderDefinition, credential: CustomProviderCredential) {
         if serverManager.toggleCustomProviderCredentialDisabled(credential) {
             authResultSuccess = true
@@ -1291,7 +1297,7 @@ struct SettingsView: View {
         }
         showingAuthResult = true
     }
-    
+
     private func disconnectCustomProviderCredential(provider: CustomProviderDefinition, credential: CustomProviderCredential) {
         if serverManager.deleteCustomProviderCredential(credential) {
             authResultSuccess = true
@@ -1302,10 +1308,10 @@ struct SettingsView: View {
         }
         showingAuthResult = true
     }
-    
+
     private func disconnectAccount(_ account: AuthAccount) {
         let wasRunning = serverManager.isRunning
-        
+
         // Stop server, delete file, restart
         let cleanup = {
             if self.authManager.deleteAccount(account) {
@@ -1316,14 +1322,14 @@ struct SettingsView: View {
                 self.authResultMessage = "Failed to remove account"
             }
             self.showingAuthResult = true
-            
+
             if wasRunning {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Timing.serverRestartDelay) {
                     self.serverManager.start { _ in }
                 }
             }
         }
-        
+
         if wasRunning {
             serverManager.stop { cleanup() }
         } else {

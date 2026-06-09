@@ -31,9 +31,6 @@ class ThinkingProxy {
     private let stateQueue = DispatchQueue(label: "io.automaze.vibeproxy.thinking-proxy-state")
 
     var vercelConfig = VercelGatewayConfig(enabled: false, apiKey: "")
-
-    /// Ordered list of providers to try on each request. First entry is always `.primary`.
-    var fallbackChain: [FallbackProvider] = [.defaultPrimary]
     
     private enum Config {
         static let hardTokenCap = 32000
@@ -289,9 +286,9 @@ class ThinkingProxy {
             return
         }
         
-        forwardWithFallback(method: method, path: rewrittenPath, version: httpVersion,
-                            headers: headers, body: modifiedBody, thinkingEnabled: thinkingEnabled,
-                            originalConnection: connection, providerIndex: 0)
+        forwardToPrimary(method: method, path: rewrittenPath, version: httpVersion,
+                         headers: headers, body: modifiedBody, thinkingEnabled: thinkingEnabled,
+                         originalConnection: connection)
     }
     
     private func isClaudeModelRequest(body: String) -> Bool {
@@ -701,54 +698,17 @@ class ThinkingProxy {
         static let interleavedThinking = "interleaved-thinking-2025-05-14"
     }
 
-    // MARK: - Fallback Chain
+    // MARK: - Primary Forwarding
 
-    /// Entry point: tries each provider in `fallbackChain` in order, advancing on retriable errors.
-    private func forwardWithFallback(
+    private func forwardToPrimary(
         method: String, path: String, version: String,
         headers: [(String, String)], body: String,
         thinkingEnabled: Bool,
         originalConnection: NWConnection,
-        providerIndex: Int
-    ) {
-        guard providerIndex < fallbackChain.count else {
-            NSLog("[ThinkingProxy] All \(fallbackChain.count) provider(s) failed — returning 502")
-            sendError(to: originalConnection, statusCode: 502, message: "All providers failed")
-            return
-        }
-        let provider = fallbackChain[providerIndex]
-        NSLog("[ThinkingProxy] Trying provider[\(providerIndex)] (\(provider.label))")
-
-        switch provider.kind {
-        case .primary:
-            forwardToPrimaryWithFallback(
-                method: method, path: path, version: version,
-                headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                originalConnection: originalConnection, providerIndex: providerIndex
-            )
-        case .ollamaCloud, .openaiCompatible:
-            forwardDirectWithFallback(
-                provider: provider,
-                method: method, path: path, version: version,
-                headers: headers, body: body,
-                originalConnection: originalConnection, providerIndex: providerIndex
-            )
-        }
-    }
-
-    /// Forwards to cli-proxy-api-plus (port 8318) with fallback-aware response checking.
-    private func forwardToPrimaryWithFallback(
-        method: String, path: String, version: String,
-        headers: [(String, String)], body: String,
-        thinkingEnabled: Bool,
-        originalConnection: NWConnection,
-        providerIndex: Int,
         retryWithApiPrefix: Bool = true
     ) {
         guard let port = NWEndpoint.Port(rawValue: targetPort) else {
-            forwardWithFallback(method: method, path: path, version: version,
-                                headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                originalConnection: originalConnection, providerIndex: providerIndex + 1)
+            sendError(to: originalConnection, statusCode: 502, message: "Bad Gateway")
             return
         }
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(targetHost), port: port)
@@ -764,192 +724,69 @@ class ThinkingProxy {
                 )
                 targetConn.send(content: requestData, completion: .contentProcessed { error in
                     if let error = error {
-                        NSLog("[ThinkingProxy] Primary send error: \(error); trying next provider")
+                        NSLog("[ThinkingProxy] Primary send error: \(error)")
                         targetConn.cancel()
-                        self.forwardWithFallback(method: method, path: path, version: version,
-                                                 headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                                 originalConnection: originalConnection, providerIndex: providerIndex + 1)
+                        self.sendError(to: originalConnection, statusCode: 502, message: "Bad Gateway")
                     } else {
-                        self.receiveResponseWithFallbackCheck(
+                        self.receiveFromPrimary(
                             from: targetConn, originalConnection: originalConnection,
                             method: method, path: path, version: version,
                             headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                            providerIndex: providerIndex, retryWithApiPrefix: retryWithApiPrefix
+                            retryWithApiPrefix: retryWithApiPrefix
                         )
                     }
                 })
             case .failed(let error):
-                NSLog("[ThinkingProxy] Primary connection failed: \(error); trying next provider")
+                NSLog("[ThinkingProxy] Primary connection failed: \(error)")
                 targetConn.cancel()
-                self.forwardWithFallback(method: method, path: path, version: version,
-                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
+                self.sendError(to: originalConnection, statusCode: 502, message: "Bad Gateway")
             default: break
             }
         }
         targetConn.start(queue: .global(qos: .userInitiated))
     }
 
-    /// Forwards directly to an Ollama or OpenAI-compatible provider with fallback-aware response checking.
-    private func forwardDirectWithFallback(
-        provider: FallbackProvider,
-        method: String, path: String, version: String,
-        headers: [(String, String)], body: String,
-        originalConnection: NWConnection,
-        providerIndex: Int
-    ) {
-        let tryNext = { [weak self] in
-            guard let self else { return }
-            self.forwardWithFallback(method: method, path: path, version: version,
-                                     headers: headers, body: body, thinkingEnabled: false,
-                                     originalConnection: originalConnection, providerIndex: providerIndex + 1)
-        }
-
-        guard let baseURLString = provider.baseURL,
-              let baseURL = URL(string: baseURLString) else {
-            NSLog("[ThinkingProxy] Provider[\(providerIndex)] has no valid base URL; skipping")
-            tryNext(); return
-        }
-
-        let host = baseURL.host ?? "localhost"
-        let isHTTPS = baseURL.scheme?.lowercased() == "https"
-        let defaultPort: UInt16 = isHTTPS ? 443 : 80
-        let portNumber = UInt16(baseURL.port ?? Int(defaultPort))
-        guard let nwPort = NWEndpoint.Port(rawValue: portNumber) else {
-            NSLog("[ThinkingProxy] Provider[\(providerIndex)] invalid port; skipping")
-            tryNext(); return
-        }
-
-        let parameters: NWParameters = isHTTPS
-            ? NWParameters(tls: NWProtocolTLS.Options(), tcp: NWProtocolTCP.Options())
-            : NWParameters.tcp
-
-        // Substitute fallback model into request body if configured
-        var effectiveBody = body
-        if let fallbackModel = provider.fallbackModel, !fallbackModel.isEmpty,
-           let rewritten = rewriteModel(in: body, to: fallbackModel) {
-            NSLog("[ThinkingProxy] Provider[\(providerIndex)] substituting model → \(fallbackModel)")
-            effectiveBody = rewritten
-        }
-
-        // Map the inbound /v1/... path onto the provider's base path
-        let basePath = baseURL.path.hasSuffix("/") ? String(baseURL.path.dropLast()) : baseURL.path
-        let effectivePath: String
-        if path.starts(with: "/v1/") || path.starts(with: "/api/v1/") {
-            let stripped = path.starts(with: "/api/v1/") ? String(path.dropFirst(4)) : path
-            effectivePath = basePath.isEmpty ? stripped : basePath + stripped
-        } else {
-            effectivePath = basePath.isEmpty ? "/v1/chat/completions" : basePath + "/chat/completions"
-        }
-
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
-        let targetConn = NWConnection(to: endpoint, using: parameters)
-
-        targetConn.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready:
-                let requestData = self.buildDirectRequestData(
-                    method: method, path: effectivePath, version: version,
-                    headers: headers, body: effectiveBody,
-                    host: host, apiKey: provider.apiKey
-                )
-                targetConn.send(content: requestData, completion: .contentProcessed { error in
-                    if let error = error {
-                        NSLog("[ThinkingProxy] Direct send error to [\(providerIndex)]: \(error); trying next")
-                        targetConn.cancel(); tryNext()
-                    } else {
-                        self.receiveResponseWithFallbackCheck(
-                            from: targetConn, originalConnection: originalConnection,
-                            method: method, path: path, version: version,
-                            headers: headers, body: body, thinkingEnabled: false,
-                            providerIndex: providerIndex, retryWithApiPrefix: false
-                        )
-                    }
-                })
-            case .failed(let error):
-                NSLog("[ThinkingProxy] Direct connection to provider[\(providerIndex)] failed: \(error); trying next")
-                targetConn.cancel(); tryNext()
-            default: break
-            }
-        }
-        targetConn.start(queue: .global(qos: .userInitiated))
-    }
-
-    /// Reads the first chunk from a provider, inspects the HTTP status, and either
-    /// falls back to the next provider or streams the response to the client.
-    private func receiveResponseWithFallbackCheck(
+    private func receiveFromPrimary(
         from targetConn: NWConnection,
         originalConnection: NWConnection,
         method: String, path: String, version: String,
         headers: [(String, String)], body: String,
         thinkingEnabled: Bool,
-        providerIndex: Int,
         retryWithApiPrefix: Bool
     ) {
         targetConn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
 
             if let error = error {
-                NSLog("[ThinkingProxy] Receive error from provider[\(providerIndex)]: \(error); trying next")
+                NSLog("[ThinkingProxy] Receive error from primary: \(error)")
                 targetConn.cancel()
-                self.forwardWithFallback(method: method, path: path, version: version,
-                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
+                self.sendError(to: originalConnection, statusCode: 502, message: "Bad Gateway")
                 return
             }
 
             guard let data, !data.isEmpty else {
-                if isComplete {
-                    NSLog("[ThinkingProxy] Empty response from provider[\(providerIndex)]; trying next")
-                    targetConn.cancel()
-                    self.forwardWithFallback(method: method, path: path, version: version,
-                                             headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                             originalConnection: originalConnection, providerIndex: providerIndex + 1)
-                }
+                if isComplete { targetConn.cancel(); originalConnection.cancel() }
                 return
             }
 
             let snippet = String(data: data, encoding: .utf8) ?? ""
 
-            // 404 path-normalisation retry (primary only)
-            if retryWithApiPrefix && providerIndex == 0 {
+            // 404 path-normalisation retry
+            if retryWithApiPrefix {
                 let is404 = snippet.contains("HTTP/1.1 404") || snippet.contains("HTTP/1.0 404")
                              || snippet.contains("404 page not found")
                 if is404, !path.starts(with: "/api/"), !path.starts(with: "/v1/") {
                     NSLog("[ThinkingProxy] 404 from primary for \(path); retrying with /api prefix")
                     targetConn.cancel()
-                    self.forwardToPrimaryWithFallback(
+                    self.forwardToPrimary(
                         method: method, path: "/api" + path, version: version,
                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                        originalConnection: originalConnection, providerIndex: providerIndex,
-                        retryWithApiPrefix: false
+                        originalConnection: originalConnection, retryWithApiPrefix: false
                     )
                     return
                 }
             }
 
-            // Fallback trigger check
-            let httpStatus = self.parseHTTPStatus(from: snippet)
-            let shouldFallback: Bool
-            if let status = httpStatus {
-                shouldFallback = FallbackTrigger.shouldFallback(httpStatus: status)
-                               || FallbackTrigger.shouldFallback(onBodySnippet: snippet)
-            } else {
-                shouldFallback = FallbackTrigger.shouldFallback(onBodySnippet: snippet)
-            }
-
-            if shouldFallback && providerIndex + 1 < self.fallbackChain.count {
-                let statusStr = httpStatus.map { "\($0)" } ?? "unknown"
-                NSLog("[ThinkingProxy] HTTP \(statusStr) from provider[\(providerIndex)] (\(self.fallbackChain[providerIndex].label)); falling back to [\(providerIndex + 1)]")
-                targetConn.cancel()
-                self.forwardWithFallback(method: method, path: path, version: version,
-                                         headers: headers, body: body, thinkingEnabled: thinkingEnabled,
-                                         originalConnection: originalConnection, providerIndex: providerIndex + 1)
-                return
-            }
-
-            // No fallback — forward the already-received first chunk, then stream the rest
             originalConnection.send(content: data, completion: .contentProcessed { sendError in
                 if let sendError = sendError {
                     NSLog("[ThinkingProxy] Send response error: \(sendError)")

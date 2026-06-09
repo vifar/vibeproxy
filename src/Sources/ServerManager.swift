@@ -66,9 +66,6 @@ class ServerManager: ObservableObject {
         }
     }
 
-    /// Fallback provider chain — persisted, observed by ThinkingProxy.
-    let fallbackChainStore = FallbackChainStore()
-
     /// Vercel AI Gateway configuration for Claude requests
     @Published var vercelGatewayEnabled: Bool = false {
         didSet {
@@ -83,7 +80,6 @@ class ServerManager: ObservableObject {
         }
     }
     var onVercelConfigChanged: (() -> Void)?
-    var onFallbackChainChanged: (() -> Void)?
 
     /// Helper class to capture output text across closures
     private class OutputCapture {
@@ -96,6 +92,7 @@ class ServerManager: ObservableObject {
     private let configInputStateQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-input-state", qos: .userInitiated)
     private let configResolutionQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-resolution", qos: .userInitiated)
     private lazy var zaiAPIKeyStore = ZAIAPIKeyStore(directoryURL: authDirectoryURL())
+    private lazy var ollamaAPIKeyStore = OllamaAPIKeyStore(directoryURL: authDirectoryURL())
     private lazy var customProviderCredentialStore = CustomProviderCredentialStore(directoryURL: authDirectoryURL())
     private var activeConfigPath = ""
     private var isRestartingForConfigUpdate = false
@@ -145,9 +142,6 @@ class ServerManager: ObservableObject {
         vercelApiKey = UserDefaults.standard.string(forKey: "vercelApiKey") ?? ""
         reloadCustomProviders()
         markObservedConfigInputsCurrent()
-        // Push initial chain into ThinkingProxy (AppDelegate sets onVercelConfigChanged
-        // and we reuse that mechanism; a dedicated callback is set in AppDelegate).
-        onFallbackChainChanged?()
     }
 
     /// Check if a provider is enabled (defaults to true if not set)
@@ -660,6 +654,26 @@ class ServerManager: ObservableObject {
             }
         }
     }
+
+    /// Saves an Ollama Cloud API key and selected models to the auth directory
+    func saveOllamaCloudAPIKey(_ apiKey: String, models: [String], completion: @escaping (Bool, String) -> Void) {
+        credentialMutationQueue.async { [weak self] in
+            guard let self else { return }
+
+            do {
+                let filePath = try self.ollamaAPIKeyStore.save(apiKey: apiKey, models: models)
+                self.addLog("✓ Ollama Cloud API key saved to \(filePath.lastPathComponent)")
+                self.refreshAuthBackedConfiguration()
+                DispatchQueue.main.async {
+                    completion(true, "API key saved successfully")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(false, error.localizedDescription)
+                }
+            }
+        }
+    }
     
     func saveCustomProviderAPIKey(providerID: String, apiKey: String, completion: @escaping (Bool, String) -> Void) {
         credentialMutationQueue.async { [weak self] in
@@ -838,6 +852,8 @@ class ServerManager: ObservableObject {
         
         let authDir = authDirectoryURL()
         let zaiApiKeys = loadZaiAPIKeys()
+        let ollamaApiKeys = loadOllamaAPIKeys()
+        let ollamaModels = ollamaAPIKeyStore.loadActiveModels()
         let customAuthRecords = loadCustomProviderCredentialRecords()
         let managedCustomProviders = ConfigComposer.parseCustomProviders(
             from: baseConfig.root,
@@ -857,12 +873,19 @@ class ServerManager: ObservableObject {
                 enabledProviderStates: enabledProviderStates
             )
         }
+        let includeOllamaCloud = isProviderEnabled(
+            ProviderCatalog.ollamaProviderKey,
+            baseConfigRoot: baseConfig.root,
+            enabledProviderStates: enabledProviderStates
+        )
         var mergedRoot = ConfigComposer.composeRuntimeConfig(
             baseRoot: baseConfig.root,
             reservedCustomProviderKeys: ProviderCatalog.reservedCustomProviderKeys,
             disabledCustomProviderIDs: disabledCustomProviderIDs,
             disabledOAuthProviderKeys: disabledProviders,
             zaiAPIKeys: zaiApiKeys,
+            ollamaAPIKeys: includeOllamaCloud ? ollamaApiKeys : [],
+            ollamaModels: ollamaModels,
             customProviderAuthRecords: customAuthRecords.map {
                 ConfigProviderAuthRecord(
                     providerID: $0.providerID,
@@ -875,8 +898,7 @@ class ServerManager: ObservableObject {
                 baseConfigRoot: baseConfig.root,
                 enabledProviderStates: enabledProviderStates
             ),
-            managedZAIProviderName: ProviderCatalog.managedZAIProviderName,
-            ollamaFallbackModels: ollamaModelsFromChain()
+            managedZAIProviderName: ProviderCatalog.managedZAIProviderName
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)
@@ -906,17 +928,7 @@ class ServerManager: ObservableObject {
     func getLogs() -> [String] {
         return logBuffer.elements()
     }
-
-    /// Returns the unique set of model names to register with cli-proxy-api-plus
-    /// for any Ollama providers in the fallback chain.
-    private func ollamaModelsFromChain() -> [String] {
-        fallbackChainStore.providers
-            .filter { $0.kind == .ollamaCloud }
-            .compactMap { $0.fallbackModel }
-            .filter { !$0.isEmpty }
-    }
     
-    /// Kill any orphaned cli-proxy-api-plus processes that might be running
     private func killOrphanedProcesses() {
         // First check if any processes exist using pgrep
         let checkTask = Process()
@@ -1070,6 +1082,14 @@ class ServerManager: ObservableObject {
         }
         return loadResult.apiKeys
     }
+
+    private func loadOllamaAPIKeys() -> [String] {
+        let loadResult = ollamaAPIKeyStore.loadActiveAPIKeys()
+        for issue in loadResult.issues {
+            NSLog("[ServerManager] Ignoring Ollama API key file at %@: %@", issue.filePath.path, issue.message)
+        }
+        return loadResult.apiKeys
+    }
     
     private func loadCustomProviderCredentialRecords() -> [CustomProviderCredentialRecord] {
         let loadResult = customProviderCredentialStore.loadAll()
@@ -1132,7 +1152,33 @@ class ServerManager: ObservableObject {
             }
         }
     }
-    
+
+    // MARK: - ThinkingProxy credential accessors
+
+    /// API keys for Ollama Cloud direct routing in ThinkingProxy.
+    func activeOllamaAPIKeys() -> [String] {
+        return ollamaAPIKeyStore.loadActiveAPIKeys().apiKeys
+    }
+
+    /// Active model names configured for Ollama Cloud.
+    func activeOllamaModels() -> [String] {
+        return ollamaAPIKeyStore.loadActiveModels()
+    }
+
+    /// Credentials for custom providers that ThinkingProxy can route to directly.
+    func activeCustomProviderCredentials() -> [(id: String, baseURL: String, apiKey: String)] {
+        let records = loadCustomProviderCredentialRecords()
+        let providersByID = Dictionary(uniqueKeysWithValues: customProviders.map { ($0.id, $0) })
+        return records.compactMap { record in
+            guard let provider = providersByID[record.providerID],
+                  !record.apiKey.isEmpty,
+                  !record.isDisabled else {
+                return nil
+            }
+            return (id: record.providerID, baseURL: provider.baseURL, apiKey: record.apiKey)
+        }
+    }
+
     private func publishConfigError(_ message: String) {
         let update = {
             let shouldLog = self.configErrorMessage != message
