@@ -16,5 +16,5 @@ enum ProviderCatalog {
 
     static let reservedCustomProviderKeys = Set(oauthProviderKeys.keys)
         .union(oauthProviderKeys.values)
-        .union([managedZAIProviderName])
+        .union([managedZAIProviderName, "ollama", "openrouter"])
 }

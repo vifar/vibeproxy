@@ -2,6 +2,8 @@ enum ServiceConnectionAction: Equatable {
     case authCommand(AuthCommand)
     case promptForQwenEmail
     case promptForZAIAPIKey
+    case promptForOllamaAPIKey
+    case promptForOpenRouterAPIKey
 }
 
 extension ServiceType {
@@ -23,6 +25,10 @@ extension ServiceType {
             return .authCommand(.antigravityLogin)
         case .zai:
             return .promptForZAIAPIKey
+        case .ollama:
+            return .promptForOllamaAPIKey
+        case .openrouter:
+            return .promptForOpenRouterAPIKey
         }
     }
 }

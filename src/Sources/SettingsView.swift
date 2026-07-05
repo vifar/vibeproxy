@@ -518,6 +518,10 @@ struct SettingsView: View {
     @State private var qwenEmail = ""
     @State private var showingZaiApiKeyPrompt = false
     @State private var zaiApiKey = ""
+    @State private var showingOllamaApiKeyPrompt = false
+    @State private var ollamaApiKey = ""
+    @State private var showingOpenRouterApiKeyPrompt = false
+    @State private var openRouterApiKey = ""
     @State private var selectedCustomProvider: CustomProviderDefinition?
     @State private var customProviderApiKey = ""
     @State private var expandedRowCount = 0
@@ -735,6 +739,44 @@ struct SettingsView: View {
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("zai", enabled: enabled) },
                         onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
                     ) { EmptyView() }
+
+                    ServiceRow(
+                        serviceType: .ollama,
+                        iconName: "",
+                        iconSystemName: "laptopcomputer",
+                        accounts: authManager.accounts(for: .ollama),
+                        isAuthenticating: authenticatingService == .ollama,
+                        helpText: "Local LLM runner for open-source models (Llama, Mistral, DeepSeek, etc.). Leave API key empty for local Ollama, or add keys for remote instances.",
+                        isEnabled: serverManager.isProviderEnabled("ollama"),
+                        isToggleLocked: serverManager.isProviderToggleLocked("ollama"),
+                        toggleHelpText: serverManager.providerConfigLockReason("ollama"),
+                        disabledReasonText: serverManager.providerConfigLockReason("ollama"),
+                        customTitle: nil,
+                        onConnect: { showingOllamaApiKeyPrompt = true },
+                        onDisconnect: { account in disconnectAccount(account) },
+                        onToggleDisabled: { account in toggleAccountDisabled(account) },
+                        onToggleEnabled: { enabled in serverManager.setProviderEnabled("ollama", enabled: enabled) },
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                    ) { EmptyView() }
+
+                    ServiceRow(
+                        serviceType: .openrouter,
+                        iconName: "",
+                        iconSystemName: "arrow.triangle.swap",
+                        accounts: authManager.accounts(for: .openrouter),
+                        isAuthenticating: authenticatingService == .openrouter,
+                        helpText: "API gateway for 200+ AI models (Claude, GPT, Gemini, Llama, etc.). Get your key at https://openrouter.ai/keys",
+                        isEnabled: serverManager.isProviderEnabled("openrouter"),
+                        isToggleLocked: serverManager.isProviderToggleLocked("openrouter"),
+                        toggleHelpText: serverManager.providerConfigLockReason("openrouter"),
+                        disabledReasonText: serverManager.providerConfigLockReason("openrouter"),
+                        customTitle: nil,
+                        onConnect: { showingOpenRouterApiKeyPrompt = true },
+                        onDisconnect: { account in disconnectAccount(account) },
+                        onToggleDisabled: { account in toggleAccountDisabled(account) },
+                        onToggleEnabled: { enabled in serverManager.setProviderEnabled("openrouter", enabled: enabled) },
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                    ) { EmptyView() }
                 }
                 
                 if !serverManager.customProviders.isEmpty {
@@ -767,7 +809,6 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .scrollDisabled(expandedRowCount == 0)
 
             Spacer()
                 .frame(height: 6)
@@ -818,7 +859,7 @@ struct SettingsView: View {
             }
             .padding(.bottom, 12)
         }
-        .frame(width: 480, height: 740)
+        .frame(width: 520, height: 900)
         .sheet(isPresented: $showingQwenEmailPrompt) {
             VStack(spacing: 16) {
                 Text("Qwen Account Email")
@@ -865,6 +906,57 @@ struct SettingsView: View {
                         startZaiAuth(apiKey: zaiApiKey)
                     }
                     .disabled(zaiApiKey.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(24)
+            .frame(width: 400)
+        }
+        .sheet(isPresented: $showingOllamaApiKeyPrompt) {
+            VStack(spacing: 16) {
+                Text("Ollama API Key")
+                    .font(.headline)
+                Text("Enter an API key for Ollama. Leave empty and click 'Add Key' if using local Ollama without authentication.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                SecureField("Optional - leave blank for local Ollama", text: $ollamaApiKey)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 350)
+                HStack(spacing: 12) {
+                    Button("Cancel") {
+                        showingOllamaApiKeyPrompt = false
+                        ollamaApiKey = ""
+                    }
+                    Button("Add Key") {
+                        showingOllamaApiKeyPrompt = false
+                        startOllamaAuth(apiKey: ollamaApiKey)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(24)
+            .frame(width: 450)
+        }
+        .sheet(isPresented: $showingOpenRouterApiKeyPrompt) {
+            VStack(spacing: 16) {
+                Text("OpenRouter API Key")
+                    .font(.headline)
+                Text("Enter your OpenRouter API key from https://openrouter.ai/keys")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                SecureField("", text: $openRouterApiKey)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 300)
+                HStack(spacing: 12) {
+                    Button("Cancel") {
+                        showingOpenRouterApiKeyPrompt = false
+                        openRouterApiKey = ""
+                    }
+                    Button("Add Key") {
+                        showingOpenRouterApiKeyPrompt = false
+                        startOpenRouterAuth(apiKey: openRouterApiKey)
+                    }
+                    .disabled(openRouterApiKey.isEmpty)
                     .keyboardShortcut(.defaultAction)
                 }
             }
@@ -971,6 +1063,12 @@ struct SettingsView: View {
         case .promptForZAIAPIKey:
             authenticatingService = nil
             return // handled separately with API key prompt
+        case .promptForOllamaAPIKey:
+            authenticatingService = nil
+            return // handled separately with API key prompt
+        case .promptForOpenRouterAPIKey:
+            authenticatingService = nil
+            return // handled separately with API key prompt
         }
         
         serverManager.runAuthCommand(command) { success, output in
@@ -1014,6 +1112,10 @@ struct SettingsView: View {
             return "🌐 Browser opened for Antigravity authentication.\n\nPlease complete the login in your browser."
         case .zai:
             return "✓ Z.AI API key added successfully.\n\nYou can now use GLM models through the proxy."
+        case .ollama:
+            return "✓ Ollama API key added successfully.\n\nYou can now use Ollama models through the proxy."
+        case .openrouter:
+            return "✓ OpenRouter API key added successfully.\n\nYou can now use OpenRouter models through the proxy."
         }
     }
     
@@ -1053,6 +1155,54 @@ struct SettingsView: View {
                 if success {
                     self.authResultSuccess = true
                     self.authResultMessage = self.successMessage(for: .zai)
+                    self.showingAuthResult = true
+                    self.authManager.checkAuthStatus()
+                } else {
+                    self.authResultSuccess = false
+                    self.authResultMessage = "Failed to save API key.\n\nDetails: \(output.isEmpty ? "Unknown error" : output)"
+                    self.showingAuthResult = true
+                }
+            }
+        }
+    }
+
+    private func startOllamaAuth(apiKey: String) {
+        authenticatingService = .ollama
+        NSLog("[SettingsView] Adding Ollama API key")
+        
+        serverManager.saveOllamaAPIKey(apiKey) { success, output in
+            NSLog("[SettingsView] Ollama key save completed - success: %d, output: %@", success, output)
+            DispatchQueue.main.async {
+                self.authenticatingService = nil
+                self.ollamaApiKey = ""
+                
+                if success {
+                    self.authResultSuccess = true
+                    self.authResultMessage = self.successMessage(for: .ollama)
+                    self.showingAuthResult = true
+                    self.authManager.checkAuthStatus()
+                } else {
+                    self.authResultSuccess = false
+                    self.authResultMessage = "Failed to save API key.\n\nDetails: \(output.isEmpty ? "Unknown error" : output)"
+                    self.showingAuthResult = true
+                }
+            }
+        }
+    }
+
+    private func startOpenRouterAuth(apiKey: String) {
+        authenticatingService = .openrouter
+        NSLog("[SettingsView] Adding OpenRouter API key")
+        
+        serverManager.saveOpenRouterAPIKey(apiKey) { success, output in
+            NSLog("[SettingsView] OpenRouter key save completed - success: %d, output: %@", success, output)
+            DispatchQueue.main.async {
+                self.authenticatingService = nil
+                self.openRouterApiKey = ""
+                
+                if success {
+                    self.authResultSuccess = true
+                    self.authResultMessage = self.successMessage(for: .openrouter)
                     self.showingAuthResult = true
                     self.authManager.checkAuthStatus()
                 } else {

@@ -153,7 +153,8 @@ enum ConfigComposer {
         zaiAPIKeys: [String],
         customProviderAuthRecords: [ConfigProviderAuthRecord],
         includeManagedZAIProvider: Bool,
-        managedZAIProviderName: String = "zai"
+        managedZAIProviderName: String = "zai",
+        enabledProviders: [String: Bool] = [:]
     ) -> [String: Any] {
         var mergedRoot = baseRoot
         
@@ -199,10 +200,9 @@ enum ConfigComposer {
                 let inlineEntries = apiKeyEntries(from: entry)
                 let authEntries = authEntriesByProviderID[providerName] ?? []
                 let effectiveEntries = deduplicatedAPIKeyEntries(inlineEntries + authEntries)
-                guard !effectiveEntries.isEmpty else {
-                    continue
+                if !effectiveEntries.isEmpty {
+                    sanitizedEntry["api-key-entries"] = effectiveEntries
                 }
-                sanitizedEntry["api-key-entries"] = effectiveEntries
             }
             
             mergedOpenAICompatibility.append(sanitizedEntry)
@@ -216,6 +216,36 @@ enum ConfigComposer {
             if !apiKeyEntries(from: managedZAIEntry).isEmpty {
                 mergedOpenAICompatibility.append(managedZAIEntry)
             }
+        }
+
+        // Ollama provider entry
+        let ollamaAuthKeys = customProviderAuthRecords
+            .filter { $0.providerID == "ollama" && !$0.isDisabled }
+            .map { ["api-key": $0.apiKey] }
+        let ollamaEnabled = (enabledProviders["ollama"] ?? true)
+        if ollamaEnabled {
+            let ollamaEntry = makeManagedProviderEntry(
+                name: "ollama",
+                baseURL: "http://localhost:11434/v1",
+                models: ollamaDefaultModels(),
+                apiKeyEntries: deduplicatedAPIKeyEntries(ollamaAuthKeys)
+            )
+            mergedOpenAICompatibility.append(ollamaEntry)
+        }
+
+        // OpenRouter provider entry
+        let openRouterAuthKeys = customProviderAuthRecords
+            .filter { $0.providerID == "openrouter" && !$0.isDisabled }
+            .map { ["api-key": $0.apiKey] }
+        let openRouterEnabled = (enabledProviders["openrouter"] ?? true)
+        if openRouterEnabled {
+            let openRouterEntry = makeManagedProviderEntry(
+                name: "openrouter",
+                baseURL: "https://openrouter.ai/api/v1",
+                models: openRouterDefaultModels(),
+                apiKeyEntries: deduplicatedAPIKeyEntries(openRouterAuthKeys)
+            )
+            mergedOpenAICompatibility.append(openRouterEntry)
         }
         
         if mergedOpenAICompatibility.isEmpty {
@@ -430,6 +460,50 @@ enum ConfigComposer {
             ["name": "glm-4-plus", "alias": "glm-4-plus"],
             ["name": "glm-4-air", "alias": "glm-4-air"],
             ["name": "glm-4-flash", "alias": "glm-4-flash"]
+        ]
+    }
+
+    private static func makeManagedProviderEntry(
+        name: String,
+        baseURL: String,
+        models: [[String: String]],
+        apiKeyEntries: [[String: String]]
+    ) -> [String: Any] {
+        var entry: [String: Any] = [
+            "name": name,
+            "base-url": baseURL,
+            "models": models
+        ]
+        if !apiKeyEntries.isEmpty {
+            entry["api-key-entries"] = apiKeyEntries
+        }
+        return entry
+    }
+
+    private static func ollamaDefaultModels() -> [[String: String]] {
+        [
+            ["name": "llama3.2", "alias": "llama3.2"],
+            ["name": "llama3.1", "alias": "llama3.1"],
+            ["name": "mistral", "alias": "mistral"],
+            ["name": "codellama", "alias": "codellama"],
+            ["name": "qwen2.5-coder", "alias": "qwen2.5-coder"],
+            ["name": "deepseek-r1", "alias": "deepseek-r1"],
+            ["name": "phi4", "alias": "phi4"],
+            ["name": "gemma3", "alias": "gemma3"]
+        ]
+    }
+
+    private static func openRouterDefaultModels() -> [[String: String]] {
+        [
+            ["name": "anthropic/claude-sonnet-4.5", "alias": "claude-sonnet-4-5-20250929"],
+            ["name": "anthropic/claude-opus-4.5", "alias": "claude-opus-4-5-20251101"],
+            ["name": "openai/gpt-4o", "alias": "gpt-4o"],
+            ["name": "openai/gpt-4.1", "alias": "gpt-4.1"],
+            ["name": "google/gemini-2.5-pro", "alias": "gemini-2.5-pro"],
+            ["name": "google/gemini-2.5-flash", "alias": "gemini-2.5-flash"],
+            ["name": "meta-llama/llama-4-maverick", "alias": "llama-4-maverick"],
+            ["name": "deepseek/deepseek-r1", "alias": "deepseek-r1"],
+            ["name": "qwen/qwen-3-max", "alias": "qwen-3-max"]
         ]
     }
 }

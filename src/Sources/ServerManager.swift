@@ -723,6 +723,43 @@ class ServerManager: ObservableObject {
         requestConfigUpdate()
     }
 
+    func saveOllamaAPIKey(_ apiKey: String, completion: @escaping (Bool, String) -> Void) {
+        let effectiveKey = apiKey.trimmingCharacters(in: .whitespaces).isEmpty ? "ollama-local" : apiKey
+        credentialMutationQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let saveResult = try self.customProviderCredentialStore.save(providerID: "ollama", apiKey: effectiveKey)
+                self.addLog("✓ Saved API key for Ollama: \(saveResult)")
+                self.refreshAuthBackedConfiguration()
+                DispatchQueue.main.async {
+                    completion(true, "API key saved successfully")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(false, error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func saveOpenRouterAPIKey(_ apiKey: String, completion: @escaping (Bool, String) -> Void) {
+        credentialMutationQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let saveResult = try self.customProviderCredentialStore.save(providerID: "openrouter", apiKey: apiKey)
+                self.addLog("✓ Saved API key for OpenRouter: \(saveResult)")
+                self.refreshAuthBackedConfiguration()
+                DispatchQueue.main.async {
+                    completion(true, "API key saved successfully")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(false, error.localizedDescription)
+                }
+            }
+        }
+    }
+
     func handleObservedConfigInputsChanged() {
         guard markObservedConfigInputsChanged() else {
             return
@@ -868,7 +905,8 @@ class ServerManager: ObservableObject {
                 baseConfigRoot: baseConfig.root,
                 enabledProviderStates: enabledProviderStates
             ),
-            managedZAIProviderName: ProviderCatalog.managedZAIProviderName
+            managedZAIProviderName: ProviderCatalog.managedZAIProviderName,
+            enabledProviders: enabledProviderStates
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)

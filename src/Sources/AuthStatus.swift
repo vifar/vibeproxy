@@ -9,6 +9,8 @@ enum ServiceType: String, CaseIterable {
     case qwen
     case antigravity
     case zai
+    case ollama
+    case openrouter
     
     var displayName: String {
         switch self {
@@ -20,6 +22,8 @@ enum ServiceType: String, CaseIterable {
         case .qwen: return "Qwen"
         case .antigravity: return "Antigravity"
         case .zai: return "Z.AI GLM"
+        case .ollama: return "Ollama"
+        case .openrouter: return "OpenRouter"
         }
     }
 }
@@ -107,10 +111,22 @@ class AuthManager: ObservableObject {
                 NSLog("[AuthStatus] Checking file: %@", file.lastPathComponent)
                 guard let data = try? Data(contentsOf: file),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let type = json["type"] as? String,
-                      let serviceType = ServiceType(rawValue: type.lowercased()) else {
+                      let type = json["type"] as? String else {
                     continue
                 }
+                
+                let serviceType: ServiceType?
+                if let st = ServiceType(rawValue: type.lowercased()) {
+                    serviceType = st
+                } else if type == "openai-compat",
+                          let provider = json["provider"] as? String,
+                          let st = ServiceType(rawValue: provider.lowercased()) {
+                    serviceType = st
+                } else {
+                    continue
+                }
+                
+                guard let serviceType = serviceType else { continue }
                 
                 NSLog("[AuthStatus] Found type '%@' in %@", type, file.lastPathComponent)
                 
