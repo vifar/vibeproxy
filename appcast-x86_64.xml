@@ -6,6 +6,116 @@
     <description>Most recent updates to VibeProxy for Intel Macs</description>
     <language>en</language>
     <item>
+      <title>Version 1.8.231</title>
+      <sparkle:version>942</sparkle:version>
+      <sparkle:shortVersionString>1.8.231</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Mon, 13 Jul 2026 12:52:36 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.231/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="6LKQ7Y2kcHFd1rIe7xqgzYMPA/d74oXB56WlKB5SS730YLnV2yRylusugpo6dHJ3YusPPJiH0qMXZgi/JP6gDw=="
+                 length="20098919"/>
+    </item>
+    <item>
+      <title>Version 1.8.230</title>
+      <sparkle:version>939</sparkle:version>
+      <sparkle:shortVersionString>1.8.230</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Mon, 13 Jul 2026 00:26:08 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.230/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="4TwBQ4zhLqDn/lWFl0ZZ+8CmkpkVJuElvTnQyeiOoGqt5hj7t9HdDOnr5F7U55ATw2x8HRuVxc2Nr9+2h6WRAA=="
+                 length="20085983"/>
+    </item>
+    <item>
+      <title>Version 1.8.229</title>
+      <sparkle:version>936</sparkle:version>
+      <sparkle:shortVersionString>1.8.229</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Sun, 12 Jul 2026 00:26:55 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.229/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="GF74sog5uCaGpZCWKccl2wsWcEwnlL3eE6LvzwFY3L3Uo7p2WWKOPgqVdSYr6TgsDzMJqVCyJWXgpjDkZ8blCg=="
+                 length="20038327"/>
+    </item>
+    <item>
+      <title>Version 1.8.228</title>
+      <sparkle:version>933</sparkle:version>
+      <sparkle:shortVersionString>1.8.228</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Sat, 11 Jul 2026 12:21:04 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.228/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="Darxy2kUBFXxZRU5oaH/uuFuifwuChjKCZu+0D7AbYUzItEosmf933ZFxA30dRw+wTqy8SgB80ad0n8KL8L8AA=="
+                 length="20036899"/>
+    </item>
+    <item>
+      <title>Version 1.8.227</title>
+      <sparkle:version>930</sparkle:version>
+      <sparkle:shortVersionString>1.8.227</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Sat, 11 Jul 2026 00:27:34 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.227/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="qgktj0Ml1xC5qVUQh/FL+EM+ylolfgZaMSAELVnXav+322RIDgoQgMRbhgSqHCsPeBuyZr/89seaoQQdMAoECw=="
+                 length="20039240"/>
+    </item>
+    <item>
+      <title>Version 1.8.226</title>
+      <sparkle:version>927</sparkle:version>
+      <sparkle:shortVersionString>1.8.226</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Fri, 10 Jul 2026 12:49:29 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.226/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="QKDCQzJe6egCwHeeC6Mg2eL6sQSExsZQfP9b4ei03zKaJS579X7BD4GPOejza8Ghl0hj5DQ4Sk6dgPQn/pchDA=="
+                 length="20020810"/>
+    </item>
+    <item>
+      <title>Version 1.8.225</title>
+      <sparkle:version>924</sparkle:version>
+      <sparkle:shortVersionString>1.8.225</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Fri, 10 Jul 2026 00:32:03 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.225/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="7HeGCgGXjxrk5viUoKY4Oqgq4+/puskSdRxIKikD4qA5x6hD6QZQhO3xpD06OKmSix5BLGrugu7mNfSc/9c1Dw=="
+                 length="20018221"/>
+    </item>
+    <item>
+      <title>Version 1.8.224</title>
+      <sparkle:version>921</sparkle:version>
+      <sparkle:shortVersionString>1.8.224</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Thu, 09 Jul 2026 00:30:08 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.224/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="QJAc1QdiHEW/PM7JhXYF4kw81i8aM8Lpbu01BoH+kP51HFGqKJJFyWwpC6GqknBHnxVKGiUD5rz0KRanqqjDDg=="
+                 length="20004678"/>
+    </item>
+    <item>
+      <title>Version 1.8.223</title>
+      <sparkle:version>918</sparkle:version>
+      <sparkle:shortVersionString>1.8.223</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Wed, 08 Jul 2026 12:35:25 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.223/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="5LH6Sguj88L7W9acCMKFBXvzPBXxCF73fb3xUsvzrtwKsdLbmi3j1ySxIaxCnlxGB+lG47HzLI+H8dV8zBCwDw=="
+                 length="19998915"/>
+    </item>
+    <item>
+      <title>Version 1.8.222</title>
+      <sparkle:version>915</sparkle:version>
+      <sparkle:shortVersionString>1.8.222</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <pubDate>Wed, 08 Jul 2026 00:26:54 +0000</pubDate>
+      <enclosure url="https://github.com/automazeio/vibeproxy/releases/download/v1.8.222/VibeProxy-x86_64.zip"
+                 type="application/octet-stream"
+                 sparkle:edSignature="ucT4eIWGoE6u37AB6Yi6n4eMzVoWQPP6BMSPL52m9nMdPDBCrXr279zXtZihYjpejwXO7prCQYudqsKMAgKwAQ=="
+                 length="19997617"/>
+    </item>
+    <item>
       <title>Version 1.8.220</title>
       <sparkle:version>910</sparkle:version>
       <sparkle:shortVersionString>1.8.220</sparkle:shortVersionString>
