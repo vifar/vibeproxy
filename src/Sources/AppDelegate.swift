@@ -66,6 +66,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
             object: nil
         )
     }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if settingsWindow?.isVisible != true {
+            openSettings()
+        }
+    }
     
     private func preloadIcons() {
         let statusIconSize = NSSize(width: 18, height: 18)
