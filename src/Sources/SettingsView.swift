@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import AppKit
 
 /// A single account row with disable toggle and remove button
 struct AccountRowView: View {
@@ -505,6 +506,41 @@ struct CustomProviderRow: View {
     }
 }
 
+private final class FormScrollBarProbeView: NSView {
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        configureScrollView()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        configureScrollView()
+    }
+
+    func configureScrollView() {
+        var ancestor = superview
+        while let view = ancestor {
+            if let scrollView = view as? NSScrollView {
+                scrollView.hasVerticalScroller = true
+                scrollView.autohidesScrollers = false
+                scrollView.verticalScrollElasticity = .automatic
+                return
+            }
+            ancestor = view.superview
+        }
+    }
+}
+
+private struct FormScrollBarConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        FormScrollBarProbeView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? FormScrollBarProbeView)?.configureScrollView()
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var serverManager: ServerManager
     @StateObject private var authManager = AuthManager()
@@ -809,6 +845,7 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .background(FormScrollBarConfigurator())
 
             Spacer()
                 .frame(height: 6)
