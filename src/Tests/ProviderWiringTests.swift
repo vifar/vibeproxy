@@ -13,6 +13,15 @@ final class ProviderWiringTests: XCTestCase {
         XCTAssertEqual(ServiceType.zai.connectionAction, .promptForZAIAPIKey)
     }
 
+    func testBundledConfigAdvertisesKimiK3ThroughOllamaCloud() throws {
+        let configURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("../Sources/Resources/config.yaml")
+        let config = try String(contentsOf: configURL, encoding: .utf8)
+
+        XCTAssertTrue(config.contains("alias: kimi-k3\n    name: kimi-k3"))
+    }
+
     func testKimiProviderCatalogRegistrationMatchesRuntimeProviderKey() {
         XCTAssertEqual(ProviderCatalog.oauthProviderKeys["kimi"], "kimi")
         XCTAssertTrue(ProviderCatalog.reservedCustomProviderKeys.contains("kimi"))
