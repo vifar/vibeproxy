@@ -50,19 +50,20 @@ func testBundledConfigUsesStableDeepSeekV4FlashDefaultThroughOllamaCloud() throw
     let loadedYAML = try XCTUnwrap(try Yams.load(yaml: config))
     let root = try XCTUnwrap(ConfigComposer.stringKeyedDictionary(loadedYAML))
     let providers = ConfigComposer.stringKeyedDictionaryArray(root["openai-compatibility"])
-    let ollamaCloud = try XCTUnwrap(
-        providers.first { ($0["name"] as? String) == "ollama-cloud" }
-    )
+    let ollamaCloudProviders = providers.filter {
+        ($0["name"] as? String) == "ollama-cloud"
+    }
+    XCTAssertEqual(ollamaCloudProviders.count, 1)
+    let ollamaCloud = try XCTUnwrap(ollamaCloudProviders.first)
     let models = ConfigComposer.stringKeyedDictionaryArray(ollamaCloud["models"])
     let deepSeekV4FlashModels = models.filter { model in
-        [model["alias"], model["name"]]
-            .compactMap { $0 as? String }
-            .map { $0.lowercased() }
-            .contains { identifier in
-                identifier.contains("deepseek")
-                    && identifier.contains("v4")
-                    && identifier.contains("flash")
-            }
+        let identifiers = [model["alias"], model["name"]]
+            .compactMap { ($0 as? String)?.lowercased() }
+        return identifiers.contains { identifier in
+            identifier.contains("deepseek")
+                && identifier.contains("v4")
+                && identifier.contains("flash")
+        }
     }
 
     XCTAssertEqual(deepSeekV4FlashModels.count, 1)
