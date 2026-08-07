@@ -20,7 +20,7 @@ final class ProviderWiringTests: XCTestCase {
             .appendingPathComponent("../Sources/Resources/config.yaml")
         let config = try String(contentsOf: configURL, encoding: .utf8)
 
-        XCTAssertTrue(config.contains("alias: kimi-k3\n    name: kimi-k3"))
+        XCTAssertTrue(config.contains("alias: kimi-k3\n        name: kimi-k3"))
     }
 
     func testBundledConfigUsesStableDeepSeekV4FlashDefaultThroughOllamaCloud() throws {
