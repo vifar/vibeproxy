@@ -27,7 +27,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CLIProxyMenuBarTests",
-            dependencies: ["CLIProxyMenuBar"],
+            dependencies: ["CLIProxyMenuBar", "Yams"],
             path: "Tests"
         )
     ]
