@@ -34,6 +34,13 @@ request-retry: 3
 # Important for Extended Thinking requests which may take 5-10+ minutes.
 request-timeout: "10m"
 
+# Routing: session-sticky round robin is the default. Mixed-provider routes
+# balance providers equally before rotating credentials inside a provider.
+routing:
+  strategy: round-robin
+  session-affinity: true
+  session-affinity-ttl: "1h"
+
 # Quota management
 quota-exceeded:
   switch-project: true
