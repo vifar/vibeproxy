@@ -436,6 +436,56 @@ struct ConfigComposerSpec {
             )
         }
 
+        run("bundled routing defaults enable session-sticky round robin", recorder: recorder) {
+            let bundledRoot: [String: Any] = [
+                "routing": [
+                    "strategy": "round-robin",
+                    "session-affinity": true,
+                    "session-affinity-ttl": "1h"
+                ]
+            ]
+            let userRoot: [String: Any] = [
+                "request-timeout": "30m"
+            ]
+
+            let merged = ConfigComposer.composeAdditiveBaseConfig(
+                bundledRoot: bundledRoot,
+                userRoot: userRoot
+            )
+
+            let routing = dictionary(merged["routing"])
+            expectEqual(routing["strategy"] as? String, "round-robin", "bundled strategy should remain", recorder: recorder)
+            expectEqual(routing["session-affinity"] as? Bool, true, "session affinity should remain", recorder: recorder)
+            expectEqual(routing["session-affinity-ttl"] as? String, "1h", "affinity ttl should remain", recorder: recorder)
+            expectEqual(merged["request-timeout"] as? String, "30m", "user timeout should overlay", recorder: recorder)
+        }
+
+        run("user routing overrides win over bundled defaults", recorder: recorder) {
+            let bundledRoot: [String: Any] = [
+                "routing": [
+                    "strategy": "round-robin",
+                    "session-affinity": true,
+                    "session-affinity-ttl": "1h"
+                ]
+            ]
+            let userRoot: [String: Any] = [
+                "routing": [
+                    "session-affinity": false,
+                    "session-affinity-ttl": "15m"
+                ]
+            ]
+
+            let merged = ConfigComposer.composeAdditiveBaseConfig(
+                bundledRoot: bundledRoot,
+                userRoot: userRoot
+            )
+
+            let routing = dictionary(merged["routing"])
+            expectEqual(routing["strategy"] as? String, "round-robin", "strategy should stay bundled", recorder: recorder)
+            expectEqual(routing["session-affinity"] as? Bool, false, "user session-affinity should win", recorder: recorder)
+            expectEqual(routing["session-affinity-ttl"] as? String, "15m", "user affinity ttl should win", recorder: recorder)
+        }
+
         if recorder.failures == 0 {
             print("ConfigComposerSpec: all checks passed")
             Foundation.exit(EXIT_SUCCESS)
