@@ -3,6 +3,9 @@ import Foundation
 enum ProviderCatalog {
     static let managedZAIProviderName = "zai"
 
+    /// Managed proxy providers (catalog-synchronized openai-compatibility entries).
+    static let managedProxyProviderDefinitions: [String: String] = ProxyProviderCatalog.supportedProviderDefinitions
+
     /// OAuth provider keys used in config.yaml oauth-excluded-models.
     static let oauthProviderKeys: [String: String] = [
         "claude": "claude",

@@ -154,7 +154,9 @@ enum ConfigComposer {
         customProviderAuthRecords: [ConfigProviderAuthRecord],
         includeManagedZAIProvider: Bool,
         managedZAIProviderName: String = "zai",
-        enabledProviders: [String: Bool] = [:]
+        enabledProviders: [String: Bool] = [:],
+        catalogModelRowsByProviderID: [String: [[String: String]]] = [:],
+        userOverrideProviderIDs: Set<String> = []
     ) -> [String: Any] {
         var mergedRoot = baseRoot
         
@@ -187,6 +189,11 @@ enum ConfigComposer {
 
             var sanitizedEntry = stripCustomProviderUIMetadata(from: entry)
             sanitizedEntry["name"] = providerName
+            if let catalogRows = catalogModelRowsByProviderID[providerName],
+               !catalogRows.isEmpty,
+               !userOverrideProviderIDs.contains(providerName) {
+                sanitizedEntry["models"] = catalogRows
+            }
             if providerName == managedZAIProviderName {
                 managedZAIBaseEntry = sanitizedEntry
                 continue

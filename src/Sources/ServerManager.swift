@@ -91,8 +91,14 @@ class ServerManager: ObservableObject {
     private let credentialMutationQueue = DispatchQueue(label: "io.automaze.vibeproxy.credential-mutations", qos: .userInitiated)
     private let configInputStateQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-input-state", qos: .userInitiated)
     private let configResolutionQueue = DispatchQueue(label: "io.automaze.vibeproxy.config-resolution", qos: .userInitiated)
+    private let proxyCatalogStateQueue = DispatchQueue(label: "io.automaze.vibeproxy.proxy-catalog-state")
+    private let proxyCatalogRefreshQueue = DispatchQueue(label: "io.automaze.vibeproxy.proxy-catalog-refresh", qos: .utility)
     private lazy var zaiAPIKeyStore = ZAIAPIKeyStore(directoryURL: authDirectoryURL())
     private lazy var customProviderCredentialStore = CustomProviderCredentialStore(directoryURL: authDirectoryURL())
+    private lazy var proxyCatalogCache = ProxyProviderCatalogCache(fileURL: proxyCatalogCacheURL())
+    private lazy var proxyCatalogClient = ProxyProviderCatalogClient(cache: proxyCatalogCache)
+    private var proxyCatalogProviders: [String: ProxyProviderEntry] = [:]
+    private var proxyCatalogRefreshTimer: DispatchSourceTimer?
     private var activeConfigPath = ""
     private var isRestartingForConfigUpdate = false
     private var isResolvingConfigUpdate = false
@@ -118,7 +124,7 @@ class ServerManager: ObservableObject {
 
     private struct LoadedBaseConfig {
         let root: [String: Any]
-        let isUserConfig: Bool
+        let userOverrideProviderIDs: Set<String>
     }
 
     private struct ConfigResolutionFailure: Error {
@@ -139,8 +145,10 @@ class ServerManager: ObservableObject {
         }
         vercelGatewayEnabled = UserDefaults.standard.bool(forKey: "vercelGatewayEnabled")
         vercelApiKey = UserDefaults.standard.string(forKey: "vercelApiKey") ?? ""
+        proxyCatalogProviders = proxyCatalogCache.load()?.providers ?? [:]
         reloadCustomProviders()
         markObservedConfigInputsCurrent()
+        startProxyCatalogRefresh()
     }
 
     /// Check if a provider is enabled (defaults to true if not set)
@@ -204,6 +212,7 @@ class ServerManager: ObservableObject {
     }
     
     deinit {
+        proxyCatalogRefreshTimer?.cancel()
         // Ensure cleanup on deallocation
         terminateActiveAuthProcessIfNeeded(reason: "deinit cleanup")
         stop()
@@ -906,7 +915,9 @@ class ServerManager: ObservableObject {
                 enabledProviderStates: enabledProviderStates
             ),
             managedZAIProviderName: ProviderCatalog.managedZAIProviderName,
-            enabledProviders: enabledProviderStates
+            enabledProviders: enabledProviderStates,
+            catalogModelRowsByProviderID: proxyCatalogModelRows(),
+            userOverrideProviderIDs: baseConfig.userOverrideProviderIDs
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)
@@ -990,6 +1001,77 @@ class ServerManager: ObservableObject {
     private func authDirectoryURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cli-proxy-api")
     }
+
+    private func proxyCatalogCacheURL() -> URL {
+        let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches", isDirectory: true)
+        return baseURL
+            .appendingPathComponent("VibeProxy", isDirectory: true)
+            .appendingPathComponent("proxy-provider-catalog.json")
+    }
+
+    private func proxyCatalogModelRows() -> [String: [[String: String]]] {
+        proxyCatalogStateQueue.sync {
+            Dictionary(
+                uniqueKeysWithValues: proxyCatalogProviders.map { providerID, entry in
+                    (providerID, ProxyProviderCatalog.modelRows(from: entry))
+                }
+            )
+        }
+    }
+
+    private func startProxyCatalogRefresh() {
+        let timer = DispatchSource.makeTimerSource(queue: proxyCatalogRefreshQueue)
+        timer.schedule(deadline: .now(), repeating: 3600)
+        timer.setEventHandler { [weak self] in
+            self?.refreshProxyCatalog()
+        }
+        proxyCatalogRefreshTimer = timer
+        timer.resume()
+    }
+
+    private func refreshProxyCatalog() {
+        proxyCatalogClient.refresh { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let refresh):
+                for (providerID, error) in refresh.failures {
+                    self.addLog("⚠️ Proxy catalog refresh failed for \(providerID); keeping cached or bundled models: \(error.localizedDescription)")
+                }
+                let changed = self.proxyCatalogStateQueue.sync {
+                    var changed = false
+                    for (providerID, entry) in refresh.providers {
+                        let providerChanged = self.proxyCatalogProviders[providerID].map {
+                            !ProxyProviderCatalog.hasSameModelIDs($0, entry)
+                        } ?? true
+                        self.proxyCatalogProviders[providerID] = entry
+                        changed = changed || providerChanged
+                    }
+                    return changed
+                }
+                if changed {
+                    let total = refresh.providers.values.reduce(0) { $0 + $1.models.count }
+                    self.addLog("✓ Updated proxy provider catalogs (\(total) models)")
+                    self.requestConfigUpdate()
+                }
+            case .failure(let error):
+                self.addLog("⚠️ Proxy catalog refresh failed; using cached or bundled models: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func userOverrideProviderIDs(in userRoot: [String: Any]) -> Set<String> {
+        let managedProviderIDs = ProviderCatalog.managedProxyProviderDefinitions.keys
+        return Set(ConfigComposer.stringKeyedDictionaryArray(userRoot["openai-compatibility"]).compactMap { entry in
+            guard let name = ConfigComposer.normalizedString(entry["name"]),
+                  managedProviderIDs.contains(name),
+                  entry["models"] != nil else {
+                return nil
+            }
+            return name
+        })
+    }
     
     private func loadBaseConfigRoot() -> Result<LoadedBaseConfig, ConfigResolutionFailure> {
         guard let bundledConfigPath = bundledConfigPath() else {
@@ -1007,7 +1089,7 @@ class ServerManager: ObservableObject {
             .appendingPathComponent(CustomProviderConstants.userConfigFilename)
             .path
         guard FileManager.default.fileExists(atPath: userConfigPath) else {
-            return validatedLoadedBaseConfig(root: bundledRoot, isUserConfig: false)
+            return validatedLoadedBaseConfig(root: bundledRoot, userOverrideProviderIDs: [])
         }
         
         let userRootResult = loadYAMLDictionary(atPath: userConfigPath)
@@ -1023,7 +1105,10 @@ class ServerManager: ObservableObject {
             userRoot: userRoot
         )
         
-        return validatedLoadedBaseConfig(root: mergedRoot, isUserConfig: true)
+        return validatedLoadedBaseConfig(
+            root: mergedRoot,
+            userOverrideProviderIDs: userOverrideProviderIDs(in: userRoot)
+        )
     }
     
     private func loadYAMLDictionary(atPath path: String) -> Result<[String: Any], ConfigResolutionFailure> {
@@ -1043,7 +1128,7 @@ class ServerManager: ObservableObject {
 
     private func validatedLoadedBaseConfig(
         root: [String: Any],
-        isUserConfig: Bool
+        userOverrideProviderIDs: Set<String>
     ) -> Result<LoadedBaseConfig, ConfigResolutionFailure> {
         let validationErrors = ConfigComposer.validateCustomProviders(
             in: root,
@@ -1056,7 +1141,12 @@ class ServerManager: ObservableObject {
                 )
             )
         }
-        return .success(LoadedBaseConfig(root: root, isUserConfig: isUserConfig))
+        return .success(
+            LoadedBaseConfig(
+                root: root,
+                userOverrideProviderIDs: userOverrideProviderIDs
+            )
+        )
     }
 
     private func currentObservedConfigInputsFingerprint() -> String {
