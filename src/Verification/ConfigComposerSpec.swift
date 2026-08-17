@@ -486,6 +486,160 @@ struct ConfigComposerSpec {
             expectEqual(routing["session-affinity-ttl"] as? String, "15m", "user affinity ttl should win", recorder: recorder)
         }
 
+        run("composeRuntimeConfig replaces bundled catalog model rows per provider", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "ollama-cloud",
+                        "base-url": "https://ollama.com/v1",
+                        "models": [["name": "bundled", "alias": "bundled"]]
+                    ],
+                    [
+                        "name": "opencode-go",
+                        "base-url": "https://opencode.ai/zen/go/v1",
+                        "models": [["name": "bundled-go", "alias": "bundled-go"]]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [],
+                includeManagedZAIProvider: false,
+                catalogModelRowsByProviderID: [
+                    "ollama-cloud": [
+                        ["name": "deepseek-v4-pro", "alias": "deepseek-v4-pro"],
+                        ["name": "kimi-k3", "alias": "kimi-k3"]
+                    ],
+                    "opencode-go": [
+                        ["name": "grok-4.5", "alias": "grok-4.5"]
+                    ]
+                ]
+            )
+
+            expectEqual(
+                modelAliases(in: provider(named: "ollama-cloud", in: runtime) ?? [:]),
+                ["deepseek-v4-pro", "kimi-k3"],
+                "catalog model ids should replace bundled ollama-cloud rows",
+                recorder: recorder
+            )
+            expectEqual(
+                modelAliases(in: provider(named: "opencode-go", in: runtime) ?? [:]),
+                ["grok-4.5"],
+                "catalog model ids should replace bundled opencode-go rows",
+                recorder: recorder
+            )
+        }
+
+        run("composeRuntimeConfig applies catalog rows only when provider is present", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [[
+                    "name": "ollama-cloud",
+                    "base-url": "https://ollama.com/v1",
+                    "models": [["name": "bundled", "alias": "bundled"]]
+                ]]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [],
+                includeManagedZAIProvider: false,
+                catalogModelRowsByProviderID: [
+                    "opencode-go": [["name": "grok-4.5", "alias": "grok-4.5"]]
+                ]
+            )
+
+            expectEqual(
+                modelAliases(in: provider(named: "ollama-cloud", in: runtime) ?? [:]),
+                ["bundled"],
+                "absent provider catalog data must not touch existing provider rows",
+                recorder: recorder
+            )
+            expectNil(provider(named: "opencode-go", in: runtime), "provider without a config entry is not synthesized", recorder: recorder)
+        }
+
+        run("composeRuntimeConfig preserves explicit user model overrides per provider", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "ollama-cloud",
+                        "base-url": "https://ollama.com/v1",
+                        "models": [["name": "user-ollama", "alias": "user-ollama"]]
+                    ],
+                    [
+                        "name": "opencode-go",
+                        "base-url": "https://opencode.ai/zen/go/v1",
+                        "models": [["name": "bundled-go", "alias": "bundled-go"]]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [],
+                includeManagedZAIProvider: false,
+                catalogModelRowsByProviderID: [
+                    "ollama-cloud": [["name": "catalog-ollama", "alias": "catalog-ollama"]],
+                    "opencode-go": [["name": "catalog-go", "alias": "catalog-go"]]
+                ],
+                userOverrideProviderIDs: ["ollama-cloud"]
+            )
+
+            expectEqual(
+                modelAliases(in: provider(named: "ollama-cloud", in: runtime) ?? [:]),
+                ["user-ollama"],
+                "explicit user ollama-cloud rows should remain authoritative",
+                recorder: recorder
+            )
+            expectEqual(
+                modelAliases(in: provider(named: "opencode-go", in: runtime) ?? [:]),
+                ["catalog-go"],
+                "one provider override must not affect the sibling provider",
+                recorder: recorder
+            )
+        }
+
+        run("ollama-cloud retains custom provider credential ownership", recorder: recorder) {
+            expectEqual(
+                ProviderCatalog.reservedCustomProviderKeys.contains("ollama-cloud"),
+                false,
+                "Ollama Cloud must remain in the custom provider UI and credential path",
+                recorder: recorder
+            )
+        }
+
+        run("validateCustomProviders accepts Ollama Cloud provider", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [[
+                    "name": "ollama-cloud",
+                    "base-url": "https://ollama.com/v1",
+                    "models": [["name": "kimi-k3", "alias": "kimi-k3"]]
+                ]]
+            ]
+            let errors = ConfigComposer.validateCustomProviders(
+                in: root,
+                reservedProviderIDs: reservedProviderIDs
+            )
+            let providers = ConfigComposer.parseCustomProviders(
+                from: root,
+                reservedProviderIDs: reservedProviderIDs
+            )
+            expectEqual(errors, [], "Ollama Cloud entry should validate", recorder: recorder)
+            expectEqual(providers.map(\.id), ["ollama-cloud"], "Ollama Cloud should remain visible as a custom provider", recorder: recorder)
+        }
+
         if recorder.failures == 0 {
             print("ConfigComposerSpec: all checks passed")
             Foundation.exit(EXIT_SUCCESS)
