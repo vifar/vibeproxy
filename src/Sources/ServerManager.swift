@@ -95,9 +95,11 @@ class ServerManager: ObservableObject {
     private let proxyCatalogRefreshQueue = DispatchQueue(label: "io.automaze.vibeproxy.proxy-catalog-refresh", qos: .utility)
     private lazy var zaiAPIKeyStore = ZAIAPIKeyStore(directoryURL: authDirectoryURL())
     private lazy var customProviderCredentialStore = CustomProviderCredentialStore(directoryURL: authDirectoryURL())
+    private lazy var userModelSelectionStore = UserModelSelectionStore(directoryURL: authDirectoryURL())
     private lazy var proxyCatalogCache = ProxyProviderCatalogCache(fileURL: proxyCatalogCacheURL())
     private lazy var proxyCatalogClient = ProxyProviderCatalogClient(cache: proxyCatalogCache)
     private var proxyCatalogProviders: [String: ProxyProviderEntry] = [:]
+    private var uiProviderPools: [String: ProxyProviderEntry] = [:]
     private var proxyCatalogRefreshTimer: DispatchSourceTimer?
     private var activeConfigPath = ""
     private var isRestartingForConfigUpdate = false
@@ -234,6 +236,8 @@ class ServerManager: ObservableObject {
             completion(false)
             return
         }
+
+        installBundledOpenCodePlugin(resourcePath: resourcePath)
         
         let bundledPath = (resourcePath as NSString).appendingPathComponent("cli-proxy-api-plus")
         guard FileManager.default.fileExists(atPath: bundledPath) else {
@@ -314,6 +318,36 @@ class ServerManager: ObservableObject {
         }
     }
     
+    /// Copies the bundled opencode plugin into the user's global plugin
+    /// directory so opencode fetches the model list live from /v1/models on
+    /// startup. Idempotent: overwrites only when the bundled copy changed.
+    private func installBundledOpenCodePlugin(resourcePath: String) {
+        let sourceURL = URL(fileURLWithPath: resourcePath)
+            .appendingPathComponent("vibeproxy-opencode-plugin.js")
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            addLog("⚠️ Bundled opencode plugin not found; skipping install")
+            return
+        }
+
+        let pluginDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/opencode/plugins", isDirectory: true)
+        let targetURL = pluginDir.appendingPathComponent("vibeproxy-opencode-plugin.js")
+
+        do {
+            try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+            let sourceData = try Data(contentsOf: sourceURL)
+            let needsUpdate = !FileManager.default.fileExists(atPath: targetURL.path)
+                || (try? Data(contentsOf: targetURL)) != sourceData
+            guard needsUpdate else {
+                return
+            }
+            try sourceData.write(to: targetURL, options: .atomic)
+            addLog("✓ Installed opencode plugin (live model pull from /v1/models)")
+        } catch {
+            addLog("⚠️ Failed to install opencode plugin: \(error.localizedDescription)")
+        }
+    }
+
     func stop(completion: (() -> Void)? = nil) {
         guard let process = process else {
             DispatchQueue.main.async {
@@ -827,7 +861,9 @@ class ServerManager: ObservableObject {
             clearConfigError()
             let providers = ConfigComposer.parseCustomProviders(
                 from: config.root,
-                reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys
+                reservedProviderIDs: ProviderCatalog.reservedCustomProviderKeys,
+                catalogModelRowsByProviderID: proxyCatalogModelRows(),
+                userOverrideProviderIDs: config.userOverrideProviderIDs
             )
             let credentialRecords = loadCustomProviderCredentialRecords()
             let credentials = logicalCustomProviderCredentials(from: credentialRecords, providers: providers)
@@ -944,6 +980,50 @@ class ServerManager: ObservableObject {
         }
     }
     
+        // MARK: - User model selection (the only static model input)
+
+    /// Pulled model ids per provider, from the in-memory catalog state.
+    /// Built-in OAuth providers (claude, codex, gemini, copilot) use their
+    /// catalog pools; managed proxy providers use their pulled entries.
+    func catalogModelIDs(forProviderID providerID: String) -> [String] {
+        proxyCatalogStateQueue.sync {
+            if let entry = proxyCatalogProviders[providerID] {
+                return entry.models.map(\.id)
+            }
+            if let entry = uiProviderPools[providerID] {
+                return entry.models.map(\.id)
+            }
+            return []
+        }
+    }
+
+    /// User-selected model ids for a provider, or nil when catalog-driven.
+    func userSelectedModelIDs(forProviderID providerID: String) -> [String]? {
+        userModelSelectionStore.selectedModelIDs(forProviderID: providerID)
+    }
+
+    /// Persist a user selection and regenerate the merged config (no app restart).
+    func setUserSelectedModelIDs(_ modelIDs: [String], forProviderID providerID: String) {
+        if let errorMessage = userModelSelectionStore.setSelectedModelIDs(modelIDs, forProviderID: providerID) {
+            addLog("❌ \(errorMessage)")
+            return
+        }
+        addLog("✓ Saved \(modelIDs.count) selected model(s) for \(providerID)")
+        reloadCustomProviders()
+        requestConfigUpdate()
+    }
+
+    /// Clear a user selection back to catalog-driven models.
+    func clearUserSelectedModelIDs(forProviderID providerID: String) {
+        if let errorMessage = userModelSelectionStore.removeModelSelection(forProviderID: providerID) {
+            addLog("❌ \(errorMessage)")
+            return
+        }
+        addLog("✓ Cleared model selection for \(providerID); catalog models restored")
+        reloadCustomProviders()
+        requestConfigUpdate()
+    }
+
     func getLogs() -> [String] {
         return logBuffer.elements()
     }
@@ -1021,7 +1101,7 @@ class ServerManager: ObservableObject {
         }
     }
 
-    private func startProxyCatalogRefresh() {
+        private func startProxyCatalogRefresh() {
         let timer = DispatchSource.makeTimerSource(queue: proxyCatalogRefreshQueue)
         timer.schedule(deadline: .now(), repeating: 3600)
         timer.setEventHandler { [weak self] in
@@ -1032,7 +1112,15 @@ class ServerManager: ObservableObject {
     }
 
     private func refreshProxyCatalog() {
-        proxyCatalogClient.refresh { [weak self] result in
+        let openRouterEnabled = enabledProviders["openrouter"] ?? true
+        let ollamaEnabled = enabledProviders["ollama"] ?? true
+        let ollamaBaseURL = ollamaEnabled ? ProxyProviderCatalog.ollamaDefaultBaseURL : nil
+        let zaiKeys = loadZaiAPIKeys()
+        proxyCatalogClient.refresh(
+            openRouterEnabled: openRouterEnabled,
+            ollamaBaseURL: ollamaBaseURL,
+            zaiAPIKeys: zaiKeys
+        ) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let refresh):
@@ -1053,6 +1141,10 @@ class ServerManager: ObservableObject {
                 if changed {
                     let total = refresh.providers.values.reduce(0) { $0 + $1.models.count }
                     self.addLog("✓ Updated proxy provider catalogs (\(total) models)")
+                    self.proxyCatalogStateQueue.sync {
+                        self.uiProviderPools = refresh.uiPools
+                    }
+                    self.reloadCustomProviders()
                     self.requestConfigUpdate()
                 }
             case .failure(let error):
@@ -1062,7 +1154,8 @@ class ServerManager: ObservableObject {
     }
 
     private func userOverrideProviderIDs(in userRoot: [String: Any]) -> Set<String> {
-        let managedProviderIDs = ProviderCatalog.managedProxyProviderDefinitions.keys
+        let managedProviderIDs = Set(ProviderCatalog.managedProxyProviderDefinitions.keys)
+            .union(["ollama", "openrouter", "zai"])
         return Set(ConfigComposer.stringKeyedDictionaryArray(userRoot["openai-compatibility"]).compactMap { entry in
             guard let name = ConfigComposer.normalizedString(entry["name"]),
                   managedProviderIDs.contains(name),

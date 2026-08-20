@@ -127,6 +127,10 @@ struct ServiceRow<ExtraContent: View>: View {
     let onToggleDisabled: (AuthAccount) -> Void
     let onToggleEnabled: (Bool) -> Void
     var onExpandChange: ((Bool) -> Void)? = nil
+    var modelPool: [String] = []
+    var savedSelection: [String]? = nil
+    var onSaveSelection: ((String, [String]) -> Void) = { _, _ in }
+    var onClearSelection: ((String) -> Void) = { _ in }
     @ViewBuilder var extraContent: () -> ExtraContent
 
     @State private var isExpanded = false
@@ -179,6 +183,20 @@ struct ServiceRow<ExtraContent: View>: View {
                         onConnect()
                     }
                     .controlSize(.small)
+                }
+
+                if isEnabled, !accounts.isEmpty {
+                    ProviderModelSelectionView(
+                        providerID: serviceType.rawValue,
+                        availableModelIDs: modelPool,
+                        savedSelection: savedSelection,
+                        onSave: { modelIDs in
+                            onSaveSelection(serviceType.rawValue, modelIDs)
+                        },
+                        onClear: {
+                            onClearSelection(serviceType.rawValue)
+                        }
+                    )
                 }
             }
             
@@ -327,6 +345,119 @@ struct CustomProviderCredentialRowView: View {
     }
 }
 
+/// Model selection button with a popover checklist.
+///
+/// The catalog supplies the available pool; the checkboxes persist the user's
+/// explicit selection into `~/.cli-proxy-api/config.yaml` as the provider's
+/// `models` block. With no selection, the full catalog list is used (nothing
+/// static anywhere in the pipeline).
+struct ProviderModelSelectionView: View {
+    let providerID: String
+    let availableModelIDs: [String]
+    let savedSelection: [String]?
+    let onSave: ([String]) -> Void
+    let onClear: () -> Void
+
+    @State private var showingPopover = false
+    @State private var selected: Set<String> = []
+
+    private var summaryText: String {
+        if availableModelIDs.isEmpty {
+            return "No models pulled yet"
+        }
+        let count = savedSelection?.count ?? availableModelIDs.count
+        return "\(count) of \(availableModelIDs.count) models"
+    }
+
+    var body: some View {
+        Button(action: { showingPopover = true }) {
+            HStack(spacing: 3) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption)
+                Text(summaryText)
+                    .font(.caption)
+            }
+        }
+        .controlSize(.small)
+        .disabled(availableModelIDs.isEmpty)
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model selection — \(providerID)")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+
+                if availableModelIDs.isEmpty {
+                    Text("No models pulled yet — the catalog refreshes automatically (hourly).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(availableModelIDs, id: \.self) { modelID in
+                                Toggle(isOn: Binding(
+                                    get: { selected.contains(modelID) },
+                                    set: { isOn in
+                                        if isOn {
+                                            selected.insert(modelID)
+                                        } else {
+                                            selected.remove(modelID)
+                                        }
+                                    }
+                                )) {
+                                    Text(modelID)
+                                        .font(.caption)
+                                }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                        .padding(4)
+                    }
+                    .frame(width: 300, height: 220)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Use all catalog models") {
+                        onClear()
+                        showingPopover = false
+                    }
+                    .controlSize(.small)
+                    .disabled(selected.isEmpty && availableModelIDs.isEmpty)
+                    Spacer()
+                    Button("Cancel") {
+                        showingPopover = false
+                    }
+                    .controlSize(.small)
+                    Button("Save") {
+                        onSave(availableModelIDs.filter { selected.contains($0) })
+                        showingPopover = false
+                    }
+                    .controlSize(.small)
+                    .disabled(availableModelIDs.isEmpty)
+                }
+            }
+            .padding(12)
+            .frame(width: 320)
+        }
+        .onAppear {
+            if selected.isEmpty {
+                if let savedSelection {
+                    selected = Set(savedSelection)
+                } else {
+                    selected = Set(availableModelIDs)
+                }
+            }
+        }
+        .onChange(of: showingPopover) { isShowing in
+            guard isShowing else { return }
+            if let savedSelection {
+                selected = Set(savedSelection)
+            } else {
+                selected = Set(availableModelIDs)
+            }
+        }
+    }
+}
+
 struct CustomProviderRow: View {
     let provider: CustomProviderDefinition
     let credentials: [CustomProviderCredential]
@@ -336,7 +467,11 @@ struct CustomProviderRow: View {
     let onDisconnect: (CustomProviderCredential) -> Void
     let onToggleDisabled: (CustomProviderCredential) -> Void
     let onToggleEnabled: (Bool) -> Void
+    var onSaveSelection: ((String, [String]) -> Void) = { _, _ in }
+    var onClearSelection: ((String) -> Void) = { _ in }
     var onExpandChange: ((Bool) -> Void)? = nil
+    var modelPool: [String] = []
+    var savedSelection: [String]? = nil
     
     @State private var isExpanded = false
     @State private var credentialToRemove: CustomProviderCredential?
@@ -377,6 +512,14 @@ struct CustomProviderRow: View {
         }
         return "Models: \(provider.modelAliases.joined(separator: ", "))"
     }
+
+    private var providerModelPool: [String] {
+        modelPool.isEmpty ? provider.modelAliases : modelPool
+    }
+
+    private var savedModelSelection: [String]? {
+        savedSelection ?? nil
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -409,6 +552,20 @@ struct CustomProviderRow: View {
                         onConnect()
                     }
                     .controlSize(.small)
+                }
+
+                if isEnabled, totalConfiguredKeyCount > 0 {
+                    ProviderModelSelectionView(
+                        providerID: provider.id,
+                        availableModelIDs: providerModelPool,
+                        savedSelection: savedModelSelection,
+                        onSave: { modelIDs in
+                            onSaveSelection(provider.id, modelIDs)
+                        },
+                        onClear: {
+                            onClearSelection(provider.id)
+                        }
+                    )
                 }
             }
             
@@ -621,7 +778,15 @@ struct SettingsView: View {
                         onDisconnect: { account in disconnectAccount(account) },
                         onToggleDisabled: { account in toggleAccountDisabled(account) },
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("claude", enabled: enabled) },
-                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "claude"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "claude"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onClearSelection: { providerID in
+                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                        }
                     ) {
                         VercelGatewayControls(serverManager: serverManager)
                     }
@@ -642,7 +807,15 @@ struct SettingsView: View {
                         onDisconnect: { account in disconnectAccount(account) },
                         onToggleDisabled: { account in toggleAccountDisabled(account) },
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("codex", enabled: enabled) },
-                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "codex"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "codex"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onClearSelection: { providerID in
+                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                        }
                     ) { EmptyView() }
 
                     ServiceRow(
@@ -661,7 +834,15 @@ struct SettingsView: View {
                         onDisconnect: { account in disconnectAccount(account) },
                         onToggleDisabled: { account in toggleAccountDisabled(account) },
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("gemini", enabled: enabled) },
-                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "gemini"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "gemini"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onClearSelection: { providerID in
+                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                        }
                     ) { EmptyView() }
 
                     ServiceRow(
@@ -699,7 +880,15 @@ struct SettingsView: View {
                         onDisconnect: { account in disconnectAccount(account) },
                         onToggleDisabled: { account in toggleAccountDisabled(account) },
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("github-copilot", enabled: enabled) },
-                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "github-copilot"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "github-copilot"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onClearSelection: { providerID in
+                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                        }
                     ) { EmptyView() }
 
                     ServiceRow(
@@ -800,9 +989,17 @@ struct SettingsView: View {
                                 onToggleEnabled: { enabled in
                                     serverManager.setProviderEnabled(provider.id, enabled: enabled)
                                 },
+                                onSaveSelection: { providerID, modelIDs in
+                                    serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                                },
+                                onClearSelection: { providerID in
+                                    serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                                },
                                 onExpandChange: { expanded in
                                     expandedRowCount += expanded ? 1 : -1
-                                }
+                                },
+                                modelPool: serverManager.catalogModelIDs(forProviderID: provider.id),
+                                savedSelection: serverManager.userSelectedModelIDs(forProviderID: provider.id)
                             )
                         }
                     }

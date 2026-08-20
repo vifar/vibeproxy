@@ -36,7 +36,9 @@ enum ConfigComposer {
     
     static func parseCustomProviders(
         from root: [String: Any],
-        reservedProviderIDs: Set<String>
+        reservedProviderIDs: Set<String>,
+        catalogModelRowsByProviderID: [String: [[String: String]]] = [:],
+        userOverrideProviderIDs: Set<String> = []
     ) -> [CustomProviderDefinition] {
         stringKeyedDictionaryArray(root["openai-compatibility"])
             .compactMap { entry in
@@ -44,11 +46,20 @@ enum ConfigComposer {
                       !reservedProviderIDs.contains(providerID) else {
                     return nil
                 }
-                
-                let modelAliases = stringKeyedDictionaryArray(entry["models"])
-                    .compactMap { model in
-                        (model["alias"] as? String) ?? (model["name"] as? String)
-                    }
+
+                // The UI model list must mirror the runtime proxy config:
+                // pulled catalog rows win unless the user authored explicit models.
+                let modelRows: [[String: Any]]
+                if userOverrideProviderIDs.contains(providerID) {
+                    modelRows = stringKeyedDictionaryArray(entry["models"])
+                } else if let catalogRows = catalogModelRowsByProviderID[providerID], !catalogRows.isEmpty {
+                    modelRows = catalogRows
+                } else {
+                    modelRows = stringKeyedDictionaryArray(entry["models"])
+                }
+                let modelAliases = modelRows.compactMap { model in
+                    (model["alias"] as? String) ?? (model["name"] as? String)
+                }
                 return CustomProviderDefinition(
                     id: providerID,
                     title: (entry["display-name"] as? String) ?? CustomProviderDefinition.defaultTitle(for: providerID),
@@ -216,40 +227,52 @@ enum ConfigComposer {
         }
         
         if includeManagedZAIProvider {
+            let zaiCatalogModels = userOverrideProviderIDs.contains(managedZAIProviderName)
+                ? []
+                : catalogModelRowsByProviderID[managedZAIProviderName] ?? []
             let managedZAIEntry = makeZAIProviderEntry(
                 baseEntry: managedZAIBaseEntry,
-                apiKeys: zaiAPIKeys
+                apiKeys: zaiAPIKeys,
+                catalogModels: zaiCatalogModels
             )
             if !apiKeyEntries(from: managedZAIEntry).isEmpty {
                 mergedOpenAICompatibility.append(managedZAIEntry)
             }
         }
 
-        // Ollama provider entry
+        // Ollama provider entry — models pulled from the local /api/tags endpoint.
         let ollamaAuthKeys = customProviderAuthRecords
             .filter { $0.providerID == "ollama" && !$0.isDisabled }
             .map { ["api-key": $0.apiKey] }
         let ollamaEnabled = (enabledProviders["ollama"] ?? true)
-        if ollamaEnabled {
+        let ollamaUserModels = selfModels(from: mergedRoot["openai-compatibility"], providerID: "ollama")
+        let ollamaModels = !ollamaUserModels.isEmpty
+            ? ollamaUserModels
+            : (userOverrideProviderIDs.contains("ollama") ? [] : catalogModelRowsByProviderID["ollama"] ?? [])
+        if ollamaEnabled, !ollamaModels.isEmpty || !ollamaAuthKeys.isEmpty {
             let ollamaEntry = makeManagedProviderEntry(
                 name: "ollama",
                 baseURL: "http://localhost:11434/v1",
-                models: ollamaDefaultModels(),
+                models: ollamaModels,
                 apiKeyEntries: deduplicatedAPIKeyEntries(ollamaAuthKeys)
             )
             mergedOpenAICompatibility.append(ollamaEntry)
         }
 
-        // OpenRouter provider entry
+        // OpenRouter provider entry — models pulled from openrouter.ai /models.
         let openRouterAuthKeys = customProviderAuthRecords
             .filter { $0.providerID == "openrouter" && !$0.isDisabled }
             .map { ["api-key": $0.apiKey] }
         let openRouterEnabled = (enabledProviders["openrouter"] ?? true)
-        if openRouterEnabled {
+        let openRouterUserModels = selfModels(from: mergedRoot["openai-compatibility"], providerID: "openrouter")
+        let openRouterModels = !openRouterUserModels.isEmpty
+            ? openRouterUserModels
+            : (userOverrideProviderIDs.contains("openrouter") ? [] : catalogModelRowsByProviderID["openrouter"] ?? [])
+        if openRouterEnabled, !openRouterModels.isEmpty || !openRouterAuthKeys.isEmpty {
             let openRouterEntry = makeManagedProviderEntry(
                 name: "openrouter",
                 baseURL: "https://openrouter.ai/api/v1",
-                models: openRouterDefaultModels(),
+                models: openRouterModels,
                 apiKeyEntries: deduplicatedAPIKeyEntries(openRouterAuthKeys)
             )
             mergedOpenAICompatibility.append(openRouterEntry)
@@ -425,7 +448,11 @@ enum ConfigComposer {
         return merged.isEmpty ? nil : merged
     }
     
-    private static func makeZAIProviderEntry(baseEntry: [String: Any]?, apiKeys: [String]) -> [String: Any] {
+    private static func makeZAIProviderEntry(
+        baseEntry: [String: Any]?,
+        apiKeys: [String],
+        catalogModels: [[String: String]] = []
+    ) -> [String: Any] {
         var entry = stripCustomProviderUIMetadata(from: baseEntry ?? [:])
         entry["name"] = "zai"
 
@@ -438,14 +465,15 @@ enum ConfigComposer {
             inlineEntries + apiKeys.map { ["api-key": $0] }
         )
 
+        // User-authored models win; otherwise the pulled catalog; otherwise none.
         if stringKeyedDictionaryArray(entry["models"]).isEmpty {
-            entry["models"] = defaultZAIModels()
+            entry["models"] = catalogModels
         }
 
         return entry
     }
 
-    private static func normalizedProviderID(from entry: [String: Any]) -> String? {
+    static func normalizedProviderID(from entry: [String: Any]) -> String? {
         normalizedString(entry["name"])
     }
 
@@ -459,15 +487,6 @@ enum ConfigComposer {
             errors.append("\(path)[\(index)] must be a mapping.")
         }
         return errors
-    }
-
-    private static func defaultZAIModels() -> [[String: String]] {
-        [
-            ["name": "glm-4.7", "alias": "glm-4.7"],
-            ["name": "glm-4-plus", "alias": "glm-4-plus"],
-            ["name": "glm-4-air", "alias": "glm-4-air"],
-            ["name": "glm-4-flash", "alias": "glm-4-flash"]
-        ]
     }
 
     private static func makeManagedProviderEntry(
@@ -487,30 +506,23 @@ enum ConfigComposer {
         return entry
     }
 
-    private static func ollamaDefaultModels() -> [[String: String]] {
-        [
-            ["name": "llama3.2", "alias": "llama3.2"],
-            ["name": "llama3.1", "alias": "llama3.1"],
-            ["name": "mistral", "alias": "mistral"],
-            ["name": "codellama", "alias": "codellama"],
-            ["name": "qwen2.5-coder", "alias": "qwen2.5-coder"],
-            ["name": "deepseek-r1", "alias": "deepseek-r1"],
-            ["name": "phi4", "alias": "phi4"],
-            ["name": "gemma3", "alias": "gemma3"]
-        ]
-    }
-
-    private static func openRouterDefaultModels() -> [[String: String]] {
-        [
-            ["name": "anthropic/claude-sonnet-4.5", "alias": "claude-sonnet-4-5-20250929"],
-            ["name": "anthropic/claude-opus-4.5", "alias": "claude-opus-4-5-20251101"],
-            ["name": "openai/gpt-4o", "alias": "gpt-4o"],
-            ["name": "openai/gpt-4.1", "alias": "gpt-4.1"],
-            ["name": "google/gemini-2.5-pro", "alias": "gemini-2.5-pro"],
-            ["name": "google/gemini-2.5-flash", "alias": "gemini-2.5-flash"],
-            ["name": "meta-llama/llama-4-maverick", "alias": "llama-4-maverick"],
-            ["name": "deepseek/deepseek-r1", "alias": "deepseek-r1"],
-            ["name": "qwen/qwen-3-max", "alias": "qwen-3-max"]
-        ]
+    /// Models explicitly authored by the user for a provider in the merged root.
+    /// Returns empty when the provider entry or its models block is absent.
+    private static func selfModels(
+        from openAICompatibility: Any?,
+        providerID: String
+    ) -> [[String: String]] {
+        for entry in stringKeyedDictionaryArray(openAICompatibility) {
+            guard normalizedProviderID(from: entry) == providerID else {
+                continue
+            }
+            return stringKeyedDictionaryArray(entry["models"]).compactMap { model in
+                guard let name = normalizedString(model["name"]) else {
+                    return nil
+                }
+                return ["name": name, "alias": (model["alias"] as? String) ?? name]
+            }
+        }
+        return []
     }
 }

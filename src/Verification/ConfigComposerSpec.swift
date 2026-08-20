@@ -640,6 +640,97 @@ struct ConfigComposerSpec {
             expectEqual(providers.map(\.id), ["ollama-cloud"], "Ollama Cloud should remain visible as a custom provider", recorder: recorder)
         }
 
+        run("parseCustomProviders surfaces catalog models for the UI list", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "opencode-go",
+                        "display-name": "OpenCode Go",
+                        "base-url": "https://opencode.ai/zen/go/v1"
+                    ]
+                ]
+            ]
+
+            let providers = ConfigComposer.parseCustomProviders(
+                from: root,
+                reservedProviderIDs: reservedProviderIDs,
+                catalogModelRowsByProviderID: [
+                    "opencode-go": [
+                        ["name": "deepseek-v4-flash", "alias": "deepseek-v4-flash"],
+                        ["name": "muse-spark-1.2-contributor", "alias": "muse-spark-1.2-contributor"]
+                    ]
+                ]
+            )
+
+            expectEqual(providers.count, 1, "catalog-backed provider should surface in the UI", recorder: recorder)
+            expectEqual(
+                providers.first?.modelAliases,
+                ["deepseek-v4-flash", "muse-spark-1.2-contributor"],
+                "UI model list must mirror the pulled catalog",
+                recorder: recorder
+            )
+        }
+
+        run("parseCustomProviders prefers user override models over catalog", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "opencode-go",
+                        "display-name": "OpenCode Go",
+                        "base-url": "https://opencode.ai/zen/go/v1",
+                        "models": [
+                            ["name": "user-only", "alias": "user-only"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let providers = ConfigComposer.parseCustomProviders(
+                from: root,
+                reservedProviderIDs: reservedProviderIDs,
+                catalogModelRowsByProviderID: [
+                    "opencode-go": [
+                        ["name": "catalog-a", "alias": "catalog-a"]
+                    ]
+                ],
+                userOverrideProviderIDs: ["opencode-go"]
+            )
+
+            expectEqual(
+                providers.first?.modelAliases,
+                ["user-only"],
+                "explicit user models must beat catalog rows in the UI list",
+                recorder: recorder
+            )
+        }
+
+        run("parseCustomProviders falls back to config models when no catalog rows", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "nvidia",
+                        "base-url": "https://integrate.api.nvidia.com/v1",
+                        "models": [
+                            ["name": "z-ai/glm5", "alias": "glm5"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let providers = ConfigComposer.parseCustomProviders(
+                from: root,
+                reservedProviderIDs: reservedProviderIDs,
+                catalogModelRowsByProviderID: [:]
+            )
+
+            expectEqual(
+                providers.first?.modelAliases,
+                ["glm5"],
+                "non-managed providers keep their config models",
+                recorder: recorder
+            )
+        }
+
         if recorder.failures == 0 {
             print("ConfigComposerSpec: all checks passed")
             Foundation.exit(EXIT_SUCCESS)

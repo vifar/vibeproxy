@@ -66,6 +66,7 @@ struct ProxyProviderCatalogDecodeResult: Equatable {
 struct ProxyProviderCatalogRefreshResult: Equatable {
     let providers: [String: ProxyProviderEntry]
     let failures: [String: ProxyProviderCatalogError]
+    let uiPools: [String: ProxyProviderEntry]
 }
 
 enum ProxyProviderCatalog {
@@ -76,6 +77,110 @@ enum ProxyProviderCatalog {
         "ollama-cloud": "https://ollama.com/v1",
         "opencode-go": "https://opencode.ai/zen/go/v1"
     ]
+
+    /// App provider key -> catalog id, used to build the UI model-selection
+    /// pool for built-in OAuth providers. These pools are for display and user
+    /// selection only; they are never injected into the proxy config.
+    static let uiProviderPoolCatalogIDs: [String: String] = [
+        "claude": "anthropic",
+        "codex": "openai",
+        "gemini": "google",
+        "github-copilot": "github-copilot"
+    ]
+
+    /// Additional pull sources. These are not part of the shared catalog file;
+    /// each is fetched from its own upstream endpoint at refresh time.
+    static let openRouterAPIURL = "https://openrouter.ai/api/v1"
+    static let zaiAPIBaseURL = "https://api.z.ai/api/coding/paas/v4"
+    static let ollamaDefaultBaseURL = "http://localhost:11434"
+    static let ollamaTagsPath = "/api/tags"
+
+    /// OpenRouter's public /models endpoint. `data[]` entries carry
+    /// id, name, context_length and top_provider.max_completion_tokens.
+    static func decodeOpenRouter(from data: Data) -> ProxyProviderEntry? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["data"] as? [[String: Any]] else {
+            return nil
+        }
+        let models = items.compactMap { item -> ProxyProviderModel? in
+            guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+            let name = (item["name"] as? String) ?? id
+            let context = (item["context_length"] as? Int) ?? 128_000
+            let output = ((item["top_provider"] as? [String: Any])?["max_completion_tokens"] as? Int) ?? 8_192
+            return ProxyProviderModel(
+                id: id,
+                name: name,
+                reasoning: (item["architecture"] as? [String: Any])?["reasoning"] as? Bool ?? false,
+                toolCall: true,
+                limit: ProxyProviderModelLimit(context: max(context, 1), output: max(output, 1)),
+                modalities: nil
+            )
+        }.sorted { $0.id < $1.id }
+        guard !models.isEmpty else { return nil }
+        return ProxyProviderEntry(
+            id: "openrouter",
+            api: openRouterAPIURL,
+            name: "OpenRouter",
+            models: models
+        )
+    }
+
+    /// Ollama's local /api/tags endpoint. `models[]` entries carry name/model.
+    /// Context/output limits are unknowable locally, so defaults are used.
+    static func decodeOllama(from data: Data, baseURL: String = ollamaDefaultBaseURL) -> ProxyProviderEntry? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["models"] as? [[String: Any]] else {
+            return nil
+        }
+        let models = items.compactMap { item -> ProxyProviderModel? in
+            guard let rawName = (item["name"] as? String) ?? (item["model"] as? String),
+                  !rawName.isEmpty else { return nil }
+            // `name` is `model:tag`; the bare model name is the stable id.
+            let id = rawName.components(separatedBy: ":").first ?? rawName
+            return ProxyProviderModel(
+                id: id,
+                name: id,
+                reasoning: false,
+                toolCall: true,
+                limit: ProxyProviderModelLimit(context: 8_192, output: 4_096),
+                modalities: nil
+            )
+        }.sorted { $0.id < $1.id }
+        guard !models.isEmpty else { return nil }
+        return ProxyProviderEntry(
+            id: "ollama",
+            api: baseURL + "/v1",
+            name: "Ollama",
+            models: models
+        )
+    }
+
+    /// Z.AI's OpenAI-compatible /models endpoint (requires the user's API key).
+    /// `data[]` entries carry id; limits are not exposed, so defaults are used.
+    static func decodeZAI(from data: Data, baseURL: String = zaiAPIBaseURL) -> ProxyProviderEntry? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["data"] as? [[String: Any]] else {
+            return nil
+        }
+        let models = items.compactMap { item -> ProxyProviderModel? in
+            guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+            return ProxyProviderModel(
+                id: id,
+                name: (item["name"] as? String) ?? id,
+                reasoning: false,
+                toolCall: true,
+                limit: ProxyProviderModelLimit(context: 262_144, output: 8_192),
+                modalities: nil
+            )
+        }.sorted { $0.id < $1.id }
+        guard !models.isEmpty else { return nil }
+        return ProxyProviderEntry(
+            id: "zai",
+            api: baseURL,
+            name: "Z.AI",
+            models: models
+        )
+    }
 
     static func decodeSupportedProviders(from data: Data) -> ProxyProviderCatalogDecodeResult {
         var result = ProxyProviderCatalogDecodeResult()
@@ -145,6 +250,47 @@ enum ProxyProviderCatalog {
         entry.models.map { ["name": $0.id, "alias": $0.id] }
     }
 
+    /// Decode model pools for the built-in OAuth providers (UI selection only).
+    /// Catalog entries use `id` + `api`; the app-side keys map via
+    /// `uiProviderPoolCatalogIDs`.
+    static func decodeUIProviderPools(from root: [String: Any]) -> [String: ProxyProviderEntry] {
+        var pools: [String: ProxyProviderEntry] = [:]
+        for (appKey, catalogID) in uiProviderPoolCatalogIDs {
+            guard let entry = root[catalogID] as? [String: Any],
+                  let models = entry["models"] as? [String: Any],
+                  !models.isEmpty else {
+                continue
+            }
+            let decoded = models.compactMap { key, value -> ProxyProviderModel? in
+                guard let modelDict = value as? [String: Any],
+                      let id = modelDict["id"] as? String, id == key else {
+                    return nil
+                }
+                let name = (modelDict["name"] as? String) ?? id
+                let limit = modelDict["limit"] as? [String: Any]
+                return ProxyProviderModel(
+                    id: id,
+                    name: name,
+                    reasoning: (modelDict["reasoning"] as? Bool) ?? false,
+                    toolCall: (modelDict["tool_call"] as? Bool) ?? true,
+                    limit: ProxyProviderModelLimit(
+                        context: max((limit?["context"] as? Int) ?? 128_000, 1),
+                        output: max((limit?["output"] as? Int) ?? 8_192, 1)
+                    ),
+                    modalities: nil
+                )
+            }.sorted { $0.id < $1.id }
+            guard !decoded.isEmpty else { continue }
+            pools[appKey] = ProxyProviderEntry(
+                id: catalogID,
+                api: (entry["api"] as? String) ?? "",
+                name: (entry["name"] as? String) ?? catalogID,
+                models: decoded
+            )
+        }
+        return pools
+    }
+
     static func hasSameModelIDs(_ lhs: ProxyProviderEntry, _ rhs: ProxyProviderEntry) -> Bool {
         lhs.models.map(\.id) == rhs.models.map(\.id)
     }
@@ -180,20 +326,57 @@ final class ProxyProviderCatalogClient {
     private let cache: ProxyProviderCatalogCache
     private let fetchData: FetchData
 
-    init(cache: ProxyProviderCatalogCache, fetchData: @escaping FetchData = ProxyProviderCatalogClient.fetchRemoteData) {
+    init(
+        cache: ProxyProviderCatalogCache,
+        fetchData: @escaping FetchData = { completion in
+            ProxyProviderCatalogClient.fetchRemoteData(url: ProxyProviderCatalog.catalogURL, completion: completion)
+        }
+    ) {
         self.cache = cache
         self.fetchData = fetchData
     }
 
-    func refresh(completion: @escaping (Result<ProxyProviderCatalogRefreshResult, Error>) -> Void) {
-        fetchData { result in
+    func refresh(
+        openRouterEnabled: Bool = false,
+        ollamaBaseURL: String? = nil,
+        zaiAPIKeys: [String] = [],
+        completion: @escaping (Result<ProxyProviderCatalogRefreshResult, Error>) -> Void
+    ) {
+        fetchData { [weak self] result in
+            guard let self else { return }
             do {
-                let decoded = ProxyProviderCatalog.decodeSupportedProviders(from: try result.get())
-                _ = self.mergeIntoCache(decoded)
+                let data = try result.get()
+                let primary = ProxyProviderCatalog.decodeSupportedProviders(from: data)
+                var providers = primary.providers
+                var failures = primary.failures
+                let uiPools: [String: ProxyProviderEntry]
+                if let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    uiPools = ProxyProviderCatalog.decodeUIProviderPools(from: root)
+                } else {
+                    uiPools = [:]
+                }
+
+                // Optional per-provider pull sources, fetched independently so
+                // one failure never blocks the others.
+                let extras = self.fetchExtras(
+                    openRouterEnabled: openRouterEnabled,
+                    ollamaBaseURL: ollamaBaseURL,
+                    zaiAPIKeys: zaiAPIKeys
+                )
+                for (providerID, entry) in extras {
+                    if let entry {
+                        providers[providerID] = entry
+                    } else {
+                        failures[providerID] = .invalidProvider(providerID, "upstream model list unavailable")
+                    }
+                }
+
+                self.mergeIntoCache(providers)
                 completion(.success(
                     ProxyProviderCatalogRefreshResult(
-                        providers: decoded.providers,
-                        failures: decoded.failures
+                        providers: providers,
+                        failures: failures,
+                        uiPools: uiPools
                     )
                 ))
             } catch {
@@ -202,19 +385,77 @@ final class ProxyProviderCatalogClient {
         }
     }
 
-    private func mergeIntoCache(_ decoded: ProxyProviderCatalogDecodeResult) -> [String: ProxyProviderEntry] {
+    private func fetchExtras(
+        openRouterEnabled: Bool,
+        ollamaBaseURL: String?,
+        zaiAPIKeys: [String]
+    ) -> [(String, ProxyProviderEntry?)] {
+        var results: [(String, ProxyProviderEntry?)] = []
+        let group = DispatchGroup()
+        let lock = NSLock()
+
+        if openRouterEnabled {
+            group.enter()
+            Self.fetchRemoteData(url: URL(string: ProxyProviderCatalog.openRouterAPIURL + "/models")!) { result in
+                var entry: ProxyProviderEntry?
+                if case .success(let data) = result {
+                    entry = ProxyProviderCatalog.decodeOpenRouter(from: data)
+                }
+                lock.lock(); results.append(("openrouter", entry)); lock.unlock()
+                group.leave()
+            }
+        }
+
+        if let ollamaBaseURL {
+            group.enter()
+            Self.fetchRemoteData(url: URL(string: ollamaBaseURL + ProxyProviderCatalog.ollamaTagsPath)!) { result in
+                var entry: ProxyProviderEntry?
+                if case .success(let data) = result {
+                    entry = ProxyProviderCatalog.decodeOllama(from: data, baseURL: ollamaBaseURL)
+                }
+                lock.lock(); results.append(("ollama", entry)); lock.unlock()
+                group.leave()
+            }
+        }
+
+        if !zaiAPIKeys.isEmpty, let firstKey = zaiAPIKeys.first {
+            group.enter()
+            Self.fetchRemoteData(
+                url: URL(string: ProxyProviderCatalog.zaiAPIBaseURL + "/models")!,
+                authorization: firstKey
+            ) { result in
+                var entry: ProxyProviderEntry?
+                if case .success(let data) = result {
+                    entry = ProxyProviderCatalog.decodeZAI(from: data)
+                }
+                lock.lock(); results.append(("zai", entry)); lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.wait()
+        return results.sorted { $0.0 < $1.0 }
+    }
+
+    private func mergeIntoCache(_ providers: [String: ProxyProviderEntry]) {
         var merged = cache.load()?.providers ?? [:]
-        for (providerID, entry) in decoded.providers {
+        for (providerID, entry) in providers {
             merged[providerID] = entry
         }
         try? cache.save(providers: merged)
-        return merged
     }
 
-    private static func fetchRemoteData(completion: @escaping (Result<Data, Error>) -> Void) {
-        var request = URLRequest(url: ProxyProviderCatalog.catalogURL)
+    private static func fetchRemoteData(
+        url: URL,
+        authorization: String? = nil,
+        completion: @escaping (Result<Data, Error>) -> Void
+    ) {
+        var request = URLRequest(url: url)
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let authorization {
+            request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization")
+        }
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
                 completion(.failure(error))

@@ -196,6 +196,48 @@ struct ProxyProviderCatalogSpec {
             "different model sets compare unequal"
         )
 
+        // OpenRouter adapter: public /models payload with unknown-limit defaults.
+        let openRouterFixture = Data(
+            """
+            {"data":[
+              {"id":"openai/gpt-5.6-luna","name":"GPT-5.6 Luna","context_length":400000,
+               "top_provider":{"max_completion_tokens":64000}},
+              {"id":"anthropic/claude-sonnet-4.5","name":"Claude Sonnet 4.5","context_length":200000}
+            ]}
+            """.utf8
+        )
+        let openRouter = try require(ProxyProviderCatalog.decodeOpenRouter(from: openRouterFixture), "openrouter adapter")
+        expectEqual(openRouter.id, "openrouter", "openrouter provider id")
+        expectEqual(openRouter.models.map(\.id), ["anthropic/claude-sonnet-4.5", "openai/gpt-5.6-luna"], "openrouter sorted ids")
+        expectEqual(openRouter.models.last?.limit.context, 400_000, "openrouter context limit")
+        expectEqual(openRouter.models.first?.limit.output, 8_192, "openrouter missing output limit falls back to default")
+
+        // Ollama adapter: local /api/tags payload with tag-stripped ids.
+        let ollamaFixture = Data(
+            """
+            {"models":[
+              {"name":"llama3.2:latest","model":"llama3.2:latest"},
+              {"name":"qwen3:8b","model":"qwen3:8b"}
+            ]}
+            """.utf8
+        )
+        let localOllama = try require(ProxyProviderCatalog.decodeOllama(from: ollamaFixture), "ollama adapter")
+        expectEqual(localOllama.id, "ollama", "ollama provider id")
+        expectEqual(localOllama.models.map(\.id), ["llama3.2", "qwen3"], "ollama ids strip :latest tag")
+
+        // Z.AI adapter: OpenAI-compatible /models payload.
+        let zaiFixture = Data(
+            """
+            {"data":[
+              {"id":"glm-5.3","name":"GLM 5.3"},
+              {"id":"glm-4.7","name":"GLM 4.7"}
+            ]}
+            """.utf8
+        )
+        let zai = try require(ProxyProviderCatalog.decodeZAI(from: zaiFixture), "zai adapter")
+        expectEqual(zai.id, "zai", "zai provider id")
+        expectEqual(zai.models.map(\.id), ["glm-4.7", "glm-5.3"], "zai sorted ids")
+
         print("ProxyProviderCatalogSpec: all checks passed")
     }
 }
