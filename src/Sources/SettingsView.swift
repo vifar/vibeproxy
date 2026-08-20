@@ -130,7 +130,6 @@ struct ServiceRow<ExtraContent: View>: View {
     var modelPool: [String] = []
     var savedSelection: [String]? = nil
     var onSaveSelection: ((String, [String]) -> Void) = { _, _ in }
-    var onClearSelection: ((String) -> Void) = { _ in }
     @ViewBuilder var extraContent: () -> ExtraContent
 
     @State private var isExpanded = false
@@ -192,9 +191,6 @@ struct ServiceRow<ExtraContent: View>: View {
                         savedSelection: savedSelection,
                         onSave: { modelIDs in
                             onSaveSelection(serviceType.rawValue, modelIDs)
-                        },
-                        onClear: {
-                            onClearSelection(serviceType.rawValue)
                         }
                     )
                 }
@@ -356,7 +352,6 @@ struct ProviderModelSelectionView: View {
     let availableModelIDs: [String]
     let savedSelection: [String]?
     let onSave: ([String]) -> Void
-    let onClear: () -> Void
 
     @State private var showingPopover = false
     @State private var selected: Set<String> = []
@@ -416,12 +411,16 @@ struct ProviderModelSelectionView: View {
                 }
 
                 HStack(spacing: 8) {
-                    Button("Use all catalog models") {
-                        onClear()
-                        showingPopover = false
+                    Button("Select all") {
+                        selected = Set(availableModelIDs)
                     }
                     .controlSize(.small)
-                    .disabled(selected.isEmpty && availableModelIDs.isEmpty)
+                    .disabled(availableModelIDs.isEmpty || selected.count == availableModelIDs.count)
+                    Button("Deselect all") {
+                        selected = []
+                    }
+                    .controlSize(.small)
+                    .disabled(selected.isEmpty)
                     Spacer()
                     Button("Cancel") {
                         showingPopover = false
@@ -468,7 +467,6 @@ struct CustomProviderRow: View {
     let onToggleDisabled: (CustomProviderCredential) -> Void
     let onToggleEnabled: (Bool) -> Void
     var onSaveSelection: ((String, [String]) -> Void) = { _, _ in }
-    var onClearSelection: ((String) -> Void) = { _ in }
     var onExpandChange: ((Bool) -> Void)? = nil
     var modelPool: [String] = []
     var savedSelection: [String]? = nil
@@ -561,9 +559,6 @@ struct CustomProviderRow: View {
                         savedSelection: savedModelSelection,
                         onSave: { modelIDs in
                             onSaveSelection(provider.id, modelIDs)
-                        },
-                        onClear: {
-                            onClearSelection(provider.id)
                         }
                     )
                 }
@@ -783,9 +778,6 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "claude"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                        },
-                        onClearSelection: { providerID in
-                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                         }
                     ) {
                         VercelGatewayControls(serverManager: serverManager)
@@ -812,9 +804,6 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "codex"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                        },
-                        onClearSelection: { providerID in
-                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                         }
                     ) { EmptyView() }
 
@@ -839,9 +828,6 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "gemini"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                        },
-                        onClearSelection: { providerID in
-                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                         }
                     ) { EmptyView() }
 
@@ -885,9 +871,6 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "github-copilot"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                        },
-                        onClearSelection: { providerID in
-                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                         }
                     ) { EmptyView() }
 
@@ -988,9 +971,6 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "xai"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                        },
-                        onClearSelection: { providerID in
-                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                         }
                     ) { EmptyView() }
                 }
@@ -1018,9 +998,6 @@ struct SettingsView: View {
                                 },
                                 onSaveSelection: { providerID, modelIDs in
                                     serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
-                                },
-                                onClearSelection: { providerID in
-                                    serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
                                 },
                                 onExpandChange: { expanded in
                                     expandedRowCount += expanded ? 1 : -1
