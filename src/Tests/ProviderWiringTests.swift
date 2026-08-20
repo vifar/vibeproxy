@@ -12,6 +12,7 @@ final class ProviderWiringTests: XCTestCase {
         XCTAssertEqual(ServiceType.qwen.connectionAction, .promptForQwenEmail)
         XCTAssertEqual(ServiceType.antigravity.connectionAction, .authCommand(.antigravityLogin))
         XCTAssertEqual(ServiceType.zai.connectionAction, .promptForZAIAPIKey)
+        XCTAssertEqual(ServiceType.xai.connectionAction, .authCommand(.xaiLogin))
     }
 
     func testBundledConfigDeclaresProviderSkeletonsWithoutStaticModelLists() throws {
@@ -68,6 +69,12 @@ final class ProviderWiringTests: XCTestCase {
     func testKimiProviderCatalogRegistrationMatchesRuntimeProviderKey() {
         XCTAssertEqual(ProviderCatalog.oauthProviderKeys["kimi"], "kimi")
         XCTAssertTrue(ProviderCatalog.reservedCustomProviderKeys.contains("kimi"))
+    }
+
+    func testXaiProviderRegistrationAndPoolMapping() {
+        XCTAssertEqual(ProviderCatalog.oauthProviderKeys["xai"], "xai")
+        XCTAssertTrue(ProviderCatalog.reservedCustomProviderKeys.contains("xai"))
+        XCTAssertEqual(ProxyProviderCatalog.uiProviderPoolCatalogIDs["xai"], "xai")
     }
 
     func testOpenRouterUsesCatalogModelsWhenNoUserModelsDeclared() {

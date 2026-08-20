@@ -85,7 +85,8 @@ enum ProxyProviderCatalog {
         "claude": "anthropic",
         "codex": "openai",
         "gemini": "google",
-        "github-copilot": "github-copilot"
+        "github-copilot": "github-copilot",
+        "xai": "xai"
     ]
 
     /// Additional pull sources. These are not part of the shared catalog file;

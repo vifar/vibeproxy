@@ -966,6 +966,33 @@ struct SettingsView: View {
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("openrouter", enabled: enabled) },
                         onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
                     ) { EmptyView() }
+
+                    ServiceRow(
+                        serviceType: .xai,
+                        iconName: "",
+                        iconSystemName: "sparkles",
+                        accounts: authManager.accounts(for: .xai),
+                        isAuthenticating: authenticatingService == .xai,
+                        helpText: "Grok (xAI) uses browser-based OAuth with your SuperGrok / X Premium+ subscription. Sign in once, then route requests through your subscription.",
+                        isEnabled: serverManager.isProviderEnabled("xai"),
+                        isToggleLocked: serverManager.isProviderToggleLocked("xai"),
+                        toggleHelpText: serverManager.providerConfigLockReason("xai"),
+                        disabledReasonText: serverManager.providerConfigLockReason("xai"),
+                        customTitle: nil,
+                        onConnect: { connectService(.xai) },
+                        onDisconnect: { account in disconnectAccount(account) },
+                        onToggleDisabled: { account in toggleAccountDisabled(account) },
+                        onToggleEnabled: { enabled in serverManager.setProviderEnabled("xai", enabled: enabled) },
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "xai"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "xai"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onClearSelection: { providerID in
+                            serverManager.clearUserSelectedModelIDs(forProviderID: providerID)
+                        }
+                    ) { EmptyView() }
                 }
                 
                 if !serverManager.customProviders.isEmpty {
@@ -1313,6 +1340,8 @@ struct SettingsView: View {
             return "✓ Ollama API key added successfully.\n\nYou can now use Ollama models through the proxy."
         case .openrouter:
             return "✓ OpenRouter API key added successfully.\n\nYou can now use OpenRouter models through the proxy."
+        case .xai:
+            return "🌐 Browser opened for Grok (xAI) authentication.\n\nPlease complete the login in your browser.\n\nThe app will automatically detect your credentials."
         }
     }
     

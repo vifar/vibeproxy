@@ -11,6 +11,7 @@ enum ServiceType: String, CaseIterable {
     case zai
     case ollama
     case openrouter
+    case xai
     
     var displayName: String {
         switch self {
@@ -24,6 +25,7 @@ enum ServiceType: String, CaseIterable {
         case .zai: return "Z.AI GLM"
         case .ollama: return "Ollama"
         case .openrouter: return "OpenRouter"
+        case .xai: return "Grok (xAI)"
         }
     }
 }

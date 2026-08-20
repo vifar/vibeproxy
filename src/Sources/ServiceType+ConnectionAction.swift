@@ -29,6 +29,8 @@ extension ServiceType {
             return .promptForOllamaAPIKey
         case .openrouter:
             return .promptForOpenRouterAPIKey
+        case .xai:
+            return .authCommand(.xaiLogin)
         }
     }
 }
