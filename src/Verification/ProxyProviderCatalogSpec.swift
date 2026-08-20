@@ -238,6 +238,46 @@ struct ProxyProviderCatalogSpec {
         expectEqual(zai.id, "zai", "zai provider id")
         expectEqual(zai.models.map(\.id), ["glm-4.7", "glm-5.3"], "zai sorted ids")
 
+        // UI provider pools: catalog entries mapped to app-side provider keys.
+        let poolRoot: [String: Any] = [
+            "xai": [
+                "id": "xai",
+                "name": "xAI",
+                "models": [
+                    "grok-4.5": ["id": "grok-4.5", "name": "Grok 4.5", "reasoning": true, "tool_call": true, "limit": ["context": 500_000, "output": 500_000]],
+                    "grok-3-mini": ["id": "grok-3-mini", "name": "Grok 3 Mini", "reasoning": true, "tool_call": true, "limit": ["context": 262_144, "output": 131_072]]
+                ]
+            ],
+            "anthropic": [
+                "id": "anthropic",
+                "name": "Anthropic",
+                "models": [
+                    "claude-opus-4-7": ["id": "claude-opus-4-7", "name": "Claude Opus 4.7", "reasoning": true, "tool_call": true, "limit": ["context": 1_000_000, "output": 128_000]]
+                ]
+            ]
+        ]
+        let pools = ProxyProviderCatalog.decodeUIProviderPools(from: poolRoot)
+        expectEqual(
+            pools["xai"]?.models.map(\.id),
+            ["grok-3-mini", "grok-4.5"],
+            "xai pool decodes and sorts its models"
+        )
+        expectEqual(
+            pools["xai"]?.models.first?.limit.context,
+            262_144,
+            "xai pool preserves context limits"
+        )
+        expectEqual(
+            pools["claude"]?.models.map(\.id),
+            ["claude-opus-4-7"],
+            "anthropic catalog id maps to the claude app key"
+        )
+        expectEqual(
+            ProxyProviderCatalog.decodeUIProviderPools(from: [:]),
+            [:],
+            "empty catalog yields no pools"
+        )
+
         print("ProxyProviderCatalogSpec: all checks passed")
     }
 }

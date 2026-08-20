@@ -731,6 +731,99 @@ struct ConfigComposerSpec {
             )
         }
 
+        run("composeRuntimeConfig maps oauth-included-models to catalog complement exclusions", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "oauth-included-models": [
+                    "xai": ["grok-4.6"]
+                ],
+                "openai-compatibility": [
+                    [
+                        "name": "xai",
+                        "models": [
+                            ["name": "grok-4.6", "alias": "grok-4.6"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [],
+                includeManagedZAIProvider: false,
+                oauthCatalogModelIDs: [
+                    "xai": ["grok-4.6", "grok-4.5", "grok-3-mini"]
+                ]
+            )
+
+            expectNil(
+                provider(named: "xai", in: runtime),
+                "reserved oauth providers must not appear under openai-compatibility",
+                recorder: recorder
+            )
+            expectNil(
+                runtime["oauth-included-models"],
+                "included-models is an input; runtime config must not leak it",
+                recorder: recorder
+            )
+            let exclusions = dictionary(runtime["oauth-excluded-models"])
+            expectEqual(
+                stringArray(exclusions["xai"]),
+                ["grok-3-mini", "grok-4.5"],
+                "unselected catalog models must be excluded",
+                recorder: recorder
+            )
+        }
+
+        run("composeAdditiveBaseConfig strips reserved oauth openai-compatibility entries", recorder: recorder) {
+            let bundledRoot: [String: Any] = [
+                "port": 8318,
+                "openai-compatibility": [
+                    [
+                        "name": "ollama-cloud",
+                        "base-url": "https://ollama.com/v1",
+                        "models": [["name": "deepseek-v4-flash", "alias": "deepseek-v4-flash"]]
+                    ]
+                ]
+            ]
+            let userRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "xai",
+                        "models": [["name": "grok-4.6", "alias": "grok-4.6"]]
+                    ]
+                ],
+                "oauth-included-models": [
+                    "xai": ["grok-4.6"]
+                ]
+            ]
+
+            let merged = ConfigComposer.composeAdditiveBaseConfig(
+                bundledRoot: bundledRoot,
+                userRoot: userRoot
+            )
+            expectNil(
+                provider(named: "xai", in: merged),
+                "reserved xai entry must be stripped before validation",
+                recorder: recorder
+            )
+            expectEqual(
+                provider(named: "ollama-cloud", in: merged)?["base-url"] as? String,
+                "https://ollama.com/v1",
+                "managed openai-compat providers must remain",
+                recorder: recorder
+            )
+            expectEqual(
+                ConfigComposer.includedOAuthModels(from: merged)["xai"],
+                ["grok-4.6"],
+                "oauth-included-models must survive additive merge",
+                recorder: recorder
+            )
+        }
+
         if recorder.failures == 0 {
             print("ConfigComposerSpec: all checks passed")
             Foundation.exit(EXIT_SUCCESS)

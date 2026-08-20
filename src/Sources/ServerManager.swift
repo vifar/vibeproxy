@@ -955,7 +955,8 @@ class ServerManager: ObservableObject {
             managedZAIProviderName: ProviderCatalog.managedZAIProviderName,
             enabledProviders: enabledProviderStates,
             catalogModelRowsByProviderID: proxyCatalogModelRows(),
-            userOverrideProviderIDs: baseConfig.userOverrideProviderIDs
+            userOverrideProviderIDs: baseConfig.userOverrideProviderIDs,
+            oauthCatalogModelIDs: oauthCatalogModelIDsByOAuthKey()
         )
         
         let mergedConfigPath = authDir.appendingPathComponent(CustomProviderConstants.mergedConfigFilename)
@@ -997,6 +998,19 @@ class ServerManager: ObservableObject {
             }
             return []
         }
+    }
+
+    /// Catalog model ids keyed by oauth-excluded-models provider key
+    /// (`gemini-cli`, `xai`, …) for composing selection exclusions.
+    private func oauthCatalogModelIDsByOAuthKey() -> [String: [String]] {
+        var result: [String: [String]] = [:]
+        for (appKey, oauthKey) in ProviderCatalog.oauthProviderKeys {
+            let ids = catalogModelIDs(forProviderID: appKey)
+            if !ids.isEmpty {
+                result[oauthKey] = ids
+            }
+        }
+        return result
     }
 
     /// User-selected model ids for a provider, or nil when catalog-driven.
@@ -1138,14 +1152,17 @@ class ServerManager: ObservableObject {
                         self.proxyCatalogProviders[providerID] = entry
                         changed = changed || providerChanged
                     }
-                    return changed
+                    // UI pools (claude/codex/gemini/copilot/xai) are decoded
+                    // from the full catalog payload on every refresh. They must
+                    // be updated even when the managed providers are unchanged,
+                    // otherwise newly added providers/models never surface.
+                    let uiPoolsChanged = self.uiProviderPools != refresh.uiPools
+                    self.uiProviderPools = refresh.uiPools
+                    return changed || uiPoolsChanged
                 }
                 if changed {
                     let total = refresh.providers.values.reduce(0) { $0 + $1.models.count }
                     self.addLog("✓ Updated proxy provider catalogs (\(total) models)")
-                    self.proxyCatalogStateQueue.sync {
-                        self.uiProviderPools = refresh.uiPools
-                    }
                     self.reloadCustomProviders()
                     self.requestConfigUpdate()
                 }

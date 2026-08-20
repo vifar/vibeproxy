@@ -12,9 +12,11 @@ enum ConfigComposer {
     
     static func composeAdditiveBaseConfig(bundledRoot: [String: Any], userRoot: [String: Any]?) -> [String: Any] {
         guard let userRoot else {
-            return bundledRoot
+            return strippingReservedOAuthCompatibilityEntries(from: bundledRoot)
         }
-        return mergeDictionary(bundledRoot, overlaidWith: userRoot)
+        return strippingReservedOAuthCompatibilityEntries(
+            from: mergeDictionary(bundledRoot, overlaidWith: userRoot)
+        )
     }
 
     static func preservingRuntimeEditableTopLevelKeys(
@@ -167,13 +169,18 @@ enum ConfigComposer {
         managedZAIProviderName: String = "zai",
         enabledProviders: [String: Bool] = [:],
         catalogModelRowsByProviderID: [String: [[String: String]]] = [:],
-        userOverrideProviderIDs: Set<String> = []
+        userOverrideProviderIDs: Set<String> = [],
+        oauthCatalogModelIDs: [String: [String]] = [:]
     ) -> [String: Any] {
-        var mergedRoot = baseRoot
-        
+        var mergedRoot = strippingReservedOAuthCompatibilityEntries(from: baseRoot)
+        let includedOAuthModels = includedOAuthModels(from: mergedRoot)
+        mergedRoot.removeValue(forKey: "oauth-included-models")
+
         let oauthExcludedModels = buildOAuthExcludedModels(
             from: mergedRoot["oauth-excluded-models"],
-            disabledOAuthProviderKeys: disabledOAuthProviderKeys
+            disabledOAuthProviderKeys: disabledOAuthProviderKeys,
+            includedOAuthModels: includedOAuthModels,
+            oauthCatalogModelIDs: oauthCatalogModelIDs
         )
         if let oauthExcludedModels {
             mergedRoot["oauth-excluded-models"] = oauthExcludedModels
@@ -439,13 +446,80 @@ enum ConfigComposer {
     
     private static func buildOAuthExcludedModels(
         from value: Any?,
-        disabledOAuthProviderKeys: [String]
+        disabledOAuthProviderKeys: [String],
+        includedOAuthModels: [String: [String]] = [:],
+        oauthCatalogModelIDs: [String: [String]] = [:]
     ) -> [String: Any]? {
         var merged = stringKeyedDictionary(value ?? [:]) ?? [:]
         for providerKey in disabledOAuthProviderKeys.sorted() {
             merged[providerKey] = ["*"]
         }
+        for (oauthKey, included) in includedOAuthModels {
+            if disabledOAuthProviderKeys.contains(oauthKey) {
+                continue
+            }
+            let includedSet = Set(included)
+            if includedSet.isEmpty {
+                merged[oauthKey] = ["*"]
+                continue
+            }
+            let catalog = Set(oauthCatalogModelIDs[oauthKey] ?? [])
+            guard !catalog.isEmpty else {
+                continue
+            }
+            let excluded = catalog.subtracting(includedSet).sorted()
+            if excluded.isEmpty {
+                merged.removeValue(forKey: oauthKey)
+            } else {
+                merged[oauthKey] = excluded
+            }
+        }
         return merged.isEmpty ? nil : merged
+    }
+
+    /// Maps an app provider id (`gemini`, `xai`) or an already-canonical oauth
+    /// key (`gemini-cli`) to the oauth-excluded-models key. Returns nil for
+    /// openai-compatibility providers.
+    static func oauthKey(forProviderID providerID: String) -> String? {
+        if let mapped = ProviderCatalog.oauthProviderKeys[providerID] {
+            return mapped
+        }
+        if ProviderCatalog.oauthProviderKeys.values.contains(providerID) {
+            return providerID
+        }
+        return nil
+    }
+
+    static func includedOAuthModels(from root: [String: Any]) -> [String: [String]] {
+        let raw = stringKeyedDictionary(root["oauth-included-models"] ?? [:]) ?? [:]
+        var result: [String: [String]] = [:]
+        for (key, value) in raw {
+            guard let oauthKey = oauthKey(forProviderID: key) else {
+                continue
+            }
+            result[oauthKey] = stringArray(value)
+        }
+        return result
+    }
+
+    static func strippingReservedOAuthCompatibilityEntries(from root: [String: Any]) -> [String: Any] {
+        var copy = root
+        let entries = stringKeyedDictionaryArray(copy["openai-compatibility"])
+        let filtered = entries.filter { entry in
+            guard let providerID = normalizedProviderID(from: entry) else {
+                return true
+            }
+            if providerID == ProviderCatalog.managedZAIProviderName {
+                return true
+            }
+            return oauthKey(forProviderID: providerID) == nil
+        }
+        if filtered.isEmpty {
+            copy.removeValue(forKey: "openai-compatibility")
+        } else {
+            copy["openai-compatibility"] = filtered
+        }
+        return copy
     }
     
     private static func makeZAIProviderEntry(
