@@ -200,6 +200,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNoti
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// VibeProxy is a regular app (LSUIElement false) so it owns a Dock tile and
+    /// a Cmd+Tab entry. Clicking the Dock tile with no window open must bring
+    /// Settings back rather than appearing to do nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openSettings()
+        }
+        return true
+    }
+
     func createSettingsWindow() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1000, height: 960),
