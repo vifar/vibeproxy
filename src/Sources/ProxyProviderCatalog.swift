@@ -300,6 +300,21 @@ enum ProxyProviderCatalog {
 struct ProxyProviderCatalogCacheEntry: Codable, Equatable {
     let providers: [String: ProxyProviderEntry]
     let fetchedAt: Date
+    /// Built-in OAuth provider pools (claude/codex/gemini/copilot/xai). Decoded
+    /// from the same catalog payload but keyed by app provider id, so they need
+    /// their own slot; without it they are lost on every restart and only a
+    /// successful network refresh can restore them.
+    let uiPools: [String: ProxyProviderEntry]?
+
+    init(
+        providers: [String: ProxyProviderEntry],
+        fetchedAt: Date,
+        uiPools: [String: ProxyProviderEntry]? = nil
+    ) {
+        self.providers = providers
+        self.fetchedAt = fetchedAt
+        self.uiPools = uiPools
+    }
 }
 
 struct ProxyProviderCatalogCache {
@@ -312,10 +327,14 @@ struct ProxyProviderCatalogCache {
         return try? JSONDecoder().decode(ProxyProviderCatalogCacheEntry.self, from: data)
     }
 
-    func save(providers: [String: ProxyProviderEntry], fetchedAt: Date = Date()) throws {
+    func save(
+        providers: [String: ProxyProviderEntry],
+        uiPools: [String: ProxyProviderEntry]? = nil,
+        fetchedAt: Date = Date()
+    ) throws {
         let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        let entry = ProxyProviderCatalogCacheEntry(providers: providers, fetchedAt: fetchedAt)
+        let entry = ProxyProviderCatalogCacheEntry(providers: providers, fetchedAt: fetchedAt, uiPools: uiPools)
         let data = try JSONEncoder().encode(entry)
         try data.write(to: fileURL, options: .atomic)
     }
@@ -326,15 +345,34 @@ final class ProxyProviderCatalogClient {
 
     private let cache: ProxyProviderCatalogCache
     private let fetchData: FetchData
+    /// Optional per-provider pull sources (OpenRouter, Ollama, Z.AI). Injectable
+    /// so the refresh's threading contract can be exercised without live network
+    /// endpoints — the extra fetches are what the outer completion blocks on.
+    private let fetchExtrasData: ((URL, String?, @escaping (Result<Data, Error>) -> Void) -> Void)?
 
     init(
         cache: ProxyProviderCatalogCache,
         fetchData: @escaping FetchData = { completion in
             ProxyProviderCatalogClient.fetchRemoteData(url: ProxyProviderCatalog.catalogURL, completion: completion)
-        }
+        },
+        fetchExtrasData: ((URL, String?, @escaping (Result<Data, Error>) -> Void) -> Void)? = nil
     ) {
         self.cache = cache
         self.fetchData = fetchData
+        self.fetchExtrasData = fetchExtrasData
+    }
+
+    /// Delivers an extra fetch, honoring the injected override when present.
+    private func fetchExtra(
+        url: URL,
+        authorization: String?,
+        completion: @escaping (Result<Data, Error>) -> Void
+    ) {
+        if let fetchExtrasData {
+            fetchExtrasData(url, authorization, completion)
+        } else {
+            Self.fetchRemoteData(url: url, authorization: authorization, completion: completion)
+        }
     }
 
     func refresh(
@@ -345,43 +383,51 @@ final class ProxyProviderCatalogClient {
     ) {
         fetchData { [weak self] result in
             guard let self else { return }
-            do {
-                let data = try result.get()
-                let primary = ProxyProviderCatalog.decodeSupportedProviders(from: data)
-                var providers = primary.providers
-                var failures = primary.failures
-                let uiPools: [String: ProxyProviderEntry]
-                if let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-                    uiPools = ProxyProviderCatalog.decodeUIProviderPools(from: root)
-                } else {
-                    uiPools = [:]
-                }
-
-                // Optional per-provider pull sources, fetched independently so
-                // one failure never blocks the others.
-                let extras = self.fetchExtras(
-                    openRouterEnabled: openRouterEnabled,
-                    ollamaBaseURL: ollamaBaseURL,
-                    zaiAPIKeys: zaiAPIKeys
-                )
-                for (providerID, entry) in extras {
-                    if let entry {
-                        providers[providerID] = entry
+            // `fetchData` delivers on URLSession.shared's serial delegate queue,
+            // and `fetchExtras` below blocks that same queue in an unbounded
+            // DispatchGroup.wait() for its own nested URLSession.shared tasks.
+            // Those completions can never be delivered while the queue is
+            // blocked, so the refresh would hang forever and no catalog would
+            // ever populate. Hop off the delegate queue before blocking.
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    let data = try result.get()
+                    let primary = ProxyProviderCatalog.decodeSupportedProviders(from: data)
+                    var providers = primary.providers
+                    var failures = primary.failures
+                    let uiPools: [String: ProxyProviderEntry]
+                    if let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                        uiPools = ProxyProviderCatalog.decodeUIProviderPools(from: root)
                     } else {
-                        failures[providerID] = .invalidProvider(providerID, "upstream model list unavailable")
+                        uiPools = [:]
                     }
-                }
 
-                self.mergeIntoCache(providers)
-                completion(.success(
-                    ProxyProviderCatalogRefreshResult(
-                        providers: providers,
-                        failures: failures,
-                        uiPools: uiPools
+                    // Optional per-provider pull sources, fetched independently so
+                    // one failure never blocks the others.
+                    let extras = self.fetchExtras(
+                        openRouterEnabled: openRouterEnabled,
+                        ollamaBaseURL: ollamaBaseURL,
+                        zaiAPIKeys: zaiAPIKeys
                     )
-                ))
-            } catch {
-                completion(.failure(error))
+                    for (providerID, entry) in extras {
+                        if let entry {
+                            providers[providerID] = entry
+                        } else {
+                            failures[providerID] = .invalidProvider(providerID, "upstream model list unavailable")
+                        }
+                    }
+
+                    self.mergeIntoCache(providers, uiPools: uiPools)
+                    completion(.success(
+                        ProxyProviderCatalogRefreshResult(
+                            providers: providers,
+                            failures: failures,
+                            uiPools: uiPools
+                        )
+                    ))
+                } catch {
+                    completion(.failure(error))
+                }
             }
         }
     }
@@ -397,7 +443,7 @@ final class ProxyProviderCatalogClient {
 
         if openRouterEnabled {
             group.enter()
-            Self.fetchRemoteData(url: URL(string: ProxyProviderCatalog.openRouterAPIURL + "/models")!) { result in
+            fetchExtra(url: URL(string: ProxyProviderCatalog.openRouterAPIURL + "/models")!, authorization: nil) { result in
                 var entry: ProxyProviderEntry?
                 if case .success(let data) = result {
                     entry = ProxyProviderCatalog.decodeOpenRouter(from: data)
@@ -409,7 +455,7 @@ final class ProxyProviderCatalogClient {
 
         if let ollamaBaseURL {
             group.enter()
-            Self.fetchRemoteData(url: URL(string: ollamaBaseURL + ProxyProviderCatalog.ollamaTagsPath)!) { result in
+            fetchExtra(url: URL(string: ollamaBaseURL + ProxyProviderCatalog.ollamaTagsPath)!, authorization: nil) { result in
                 var entry: ProxyProviderEntry?
                 if case .success(let data) = result {
                     entry = ProxyProviderCatalog.decodeOllama(from: data, baseURL: ollamaBaseURL)
@@ -421,7 +467,7 @@ final class ProxyProviderCatalogClient {
 
         if !zaiAPIKeys.isEmpty, let firstKey = zaiAPIKeys.first {
             group.enter()
-            Self.fetchRemoteData(
+            fetchExtra(
                 url: URL(string: ProxyProviderCatalog.zaiAPIBaseURL + "/models")!,
                 authorization: firstKey
             ) { result in
@@ -438,12 +484,21 @@ final class ProxyProviderCatalogClient {
         return results.sorted { $0.0 < $1.0 }
     }
 
-    private func mergeIntoCache(_ providers: [String: ProxyProviderEntry]) {
-        var merged = cache.load()?.providers ?? [:]
+    private func mergeIntoCache(
+        _ providers: [String: ProxyProviderEntry],
+        uiPools: [String: ProxyProviderEntry]? = nil
+    ) {
+        let existing = cache.load()
+        var merged = existing?.providers ?? [:]
         for (providerID, entry) in providers {
             merged[providerID] = entry
         }
-        try? cache.save(providers: merged)
+        // A structurally valid payload can still yield no built-in OAuth pools
+        // (for example a catalog that dropped one of those providers). Never let
+        // that wipe a good cached pool, or the model list would empty out on
+        // restart until the next successful refresh.
+        let pools = (uiPools?.isEmpty == false) ? uiPools : existing?.uiPools
+        try? cache.save(providers: merged, uiPools: pools)
     }
 
     private static func fetchRemoteData(

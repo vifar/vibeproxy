@@ -145,6 +145,52 @@ struct ProxyProviderCatalogSpec {
         expectEqual(loaded.providers, result.providers, "cache provider round trip")
         expectEqual(loaded.fetchedAt, fetchedAt, "cache timestamp round trip")
 
+        // Built-in OAuth pools live in their own cache slot: they are decoded
+        // from the same payload but keyed by app provider id. Losing them across
+        // a restart is what leaves every model list empty until a refresh lands.
+        let poolPayload = Data(
+            """
+            {
+              "anthropic": {
+                "id": "anthropic",
+                "api": "https://api.anthropic.com",
+                "name": "Anthropic",
+                "models": {
+                  "claude-opus-5": {
+                    "id": "claude-opus-5",
+                    "name": "Claude Opus 5",
+                    "reasoning": true,
+                    "tool_call": true,
+                    "limit": {"context": 200000, "output": 64000}
+                  }
+                }
+              }
+            }
+            """.utf8
+        )
+        let cachePoolRoot = try require(
+            try JSONSerialization.jsonObject(with: poolPayload) as? [String: Any],
+            "pool fixture should parse"
+        )
+        let poolFixture = ProxyProviderCatalog.decodeUIProviderPools(from: cachePoolRoot)
+        expectEqual(poolFixture.keys.sorted(), ["claude"], "pool fixture decodes to the claude app key")
+
+        let poolCache = ProxyProviderCatalogCache(
+            fileURL: temporaryDirectory.appendingPathComponent("pool-catalog.json")
+        )
+        try poolCache.save(providers: result.providers, uiPools: poolFixture, fetchedAt: fetchedAt)
+        let reloadedPools = try require(poolCache.load(), "saved pool cache should load")
+        expectEqual(reloadedPools.uiPools, poolFixture, "ui pool round trip")
+
+        // A refresh whose payload decodes no pools must keep the previously
+        // cached ones instead of clearing every model list on next launch.
+        let preservingClient = ProxyProviderCatalogClient(
+            cache: poolCache,
+            fetchData: { completion in completion(.success(fixture)) }
+        )
+        _ = waitForRefresh(preservingClient)
+        expectEqual(poolCache.load()?.uiPools, poolFixture, "refresh preserves ui pools when the payload yields none")
+
         try Data("not json".utf8).write(to: temporaryDirectory.appendingPathComponent("proxy-provider-catalog.json"))
         expectEqual(cache.load(), nil, "malformed cache is ignored")
 
@@ -278,6 +324,57 @@ struct ProxyProviderCatalogSpec {
             "empty catalog yields no pools"
         )
 
+        // The refresh must not block URLSession.shared's serial delegate queue.
+        // A real URLSession completion is delivered on that queue; if the outer
+        // handler then blocks it waiting for the extra fetches, those extra
+        // completions can never be delivered and the model catalog hangs
+        // forever. Drive a real URLSession callback into the client and require
+        // refresh to finish.
+        let threadingCache = ProxyProviderCatalogCache(
+            fileURL: temporaryDirectory.appendingPathComponent("threading-catalog.json")
+        )
+        // Delivers through real URLSession.shared, whose completion lands on the
+        // shared serial delegate queue exactly as production does.
+        let realSessionFetch: (URL, @escaping (Result<Data, Error>) -> Void) -> Void = { url, completion in
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            URLSession.shared.dataTask(with: request) { _, _, error in
+                completion(.failure(error ?? VerificationError(message: "probe")))
+            }.resume()
+        }
+        let threadingClient = ProxyProviderCatalogClient(
+            cache: threadingCache,
+            fetchData: { completion in
+                realSessionFetch(URL(string: "http://127.0.0.1:1/v1")!) { _ in
+                    completion(.success(fixture))
+                }
+            },
+            fetchExtrasData: { url, _, completion in
+                realSessionFetch(url, completion)
+            }
+        )
+        let threadingResult: Result<ProxyProviderCatalogRefreshResult, Error> = {
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<ProxyProviderCatalogRefreshResult, Error>?
+            // openRouterEnabled must be true: the extras fetch is what the outer
+            // completion blocks on, so with no extra source the path under test
+            // is never entered and the check would pass vacuously.
+            threadingClient.refresh(openRouterEnabled: true) { refreshResult in
+                result = refreshResult
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 15) == .success, let result else {
+                return .failure(VerificationError(message: "refresh must complete off the delegate queue (timed out)"))
+            }
+            return result
+        }()
+        switch threadingResult {
+        case .success:
+            break
+        case .failure(let error):
+            throw VerificationError(message: "refresh failed: \(error)")
+        }
+
         print("ProxyProviderCatalogSpec: all checks passed")
     }
 }
@@ -308,14 +405,17 @@ private struct VerificationError: Error {
     let message: String
 }
 
-private func waitForRefresh(_ client: ProxyProviderCatalogClient) -> Result<ProxyProviderCatalogRefreshResult, Error> {
+private func waitForRefresh(
+    _ client: ProxyProviderCatalogClient,
+    timeout: TimeInterval = 2
+) -> Result<ProxyProviderCatalogRefreshResult, Error> {
     let semaphore = DispatchSemaphore(value: 0)
     var result: Result<ProxyProviderCatalogRefreshResult, Error>?
     client.refresh { refreshResult in
         result = refreshResult
         semaphore.signal()
     }
-    guard semaphore.wait(timeout: .now() + 2) == .success, let result else {
+    guard semaphore.wait(timeout: .now() + timeout) == .success, let result else {
         return .failure(VerificationError(message: "catalog refresh timed out"))
     }
     return result

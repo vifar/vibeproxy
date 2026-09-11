@@ -148,6 +148,7 @@ class ServerManager: ObservableObject {
         vercelGatewayEnabled = UserDefaults.standard.bool(forKey: "vercelGatewayEnabled")
         vercelApiKey = UserDefaults.standard.string(forKey: "vercelApiKey") ?? ""
         proxyCatalogProviders = proxyCatalogCache.load()?.providers ?? [:]
+        uiProviderPools = proxyCatalogCache.load()?.uiPools ?? [:]
         reloadCustomProviders()
         markObservedConfigInputsCurrent()
         startProxyCatalogRefresh()
@@ -1117,7 +1118,7 @@ class ServerManager: ObservableObject {
         }
     }
 
-        private func startProxyCatalogRefresh() {
+    private func startProxyCatalogRefresh() {
         let timer = DispatchSource.makeTimerSource(queue: proxyCatalogRefreshQueue)
         timer.schedule(deadline: .now(), repeating: 3600)
         timer.setEventHandler { [weak self] in
@@ -1127,7 +1128,22 @@ class ServerManager: ObservableObject {
         timer.resume()
     }
 
-    private func refreshProxyCatalog() {
+    /// Manual catalog pull from the model-selection popover's refresh control.
+    /// Runs off the main thread so the popover stays responsive; the completion
+    /// fires on the main thread once the pull has landed.
+    func refreshProxyCatalogNow(completion: @escaping () -> Void) {
+        proxyCatalogRefreshQueue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async(execute: completion)
+                return
+            }
+            self.refreshProxyCatalog {
+                DispatchQueue.main.async(execute: completion)
+            }
+        }
+    }
+
+    private func refreshProxyCatalog(completion: (() -> Void)? = nil) {
         let openRouterEnabled = enabledProviders["openrouter"] ?? true
         let ollamaEnabled = enabledProviders["ollama"] ?? true
         let ollamaBaseURL = ollamaEnabled ? ProxyProviderCatalog.ollamaDefaultBaseURL : nil
@@ -1137,6 +1153,7 @@ class ServerManager: ObservableObject {
             ollamaBaseURL: ollamaBaseURL,
             zaiAPIKeys: zaiKeys
         ) { [weak self] result in
+            defer { completion?() }
             guard let self else { return }
             switch result {
             case .success(let refresh):
