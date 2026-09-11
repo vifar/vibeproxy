@@ -130,6 +130,7 @@ struct ServiceRow<ExtraContent: View>: View {
     var modelPool: [String] = []
     var savedSelection: [String]? = nil
     var onSaveSelection: ((String, [String]) -> Void) = { _, _ in }
+    var onRefreshModels: ((@escaping () -> Void) -> Void)? = nil
     @ViewBuilder var extraContent: () -> ExtraContent
 
     @State private var isExpanded = false
@@ -191,7 +192,8 @@ struct ServiceRow<ExtraContent: View>: View {
                         savedSelection: savedSelection,
                         onSave: { modelIDs in
                             onSaveSelection(serviceType.rawValue, modelIDs)
-                        }
+                        },
+                        onRefresh: onRefreshModels
                     )
                 }
             }
@@ -352,9 +354,13 @@ struct ProviderModelSelectionView: View {
     let availableModelIDs: [String]
     let savedSelection: [String]?
     let onSave: ([String]) -> Void
+    /// Pulls the catalog again; calls its completion when the new pool has
+    /// landed. Nil (or absent) hides the refresh control.
+    var onRefresh: ((@escaping () -> Void) -> Void)? = nil
 
     @State private var showingPopover = false
     @State private var selected: Set<String> = []
+    @State private var isRefreshing = false
 
     private var summaryText: String {
         if availableModelIDs.isEmpty {
@@ -362,6 +368,18 @@ struct ProviderModelSelectionView: View {
         }
         let count = savedSelection?.count ?? availableModelIDs.count
         return "\(count) of \(availableModelIDs.count) models"
+    }
+
+    /// Every available model is already checked, so the one button offers the
+    /// inverse action instead of a redundant second button.
+    private var allSelected: Bool {
+        !availableModelIDs.isEmpty && selected.count == availableModelIDs.count
+    }
+
+    /// With no pool there is nothing to select, but the refresh control must
+    /// still be reachable — an empty catalog is exactly when it is needed.
+    private var canOpenPopover: Bool {
+        !availableModelIDs.isEmpty || onRefresh != nil
     }
 
     var body: some View {
@@ -374,15 +392,36 @@ struct ProviderModelSelectionView: View {
             }
         }
         .controlSize(.small)
-        .disabled(availableModelIDs.isEmpty)
+        .disabled(!canOpenPopover)
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Model selection — \(providerID)")
-                    .font(.caption)
-                    .fontWeight(.semibold)
+                HStack(spacing: 6) {
+                    Text("Model selection — \(providerID)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    if let onRefresh {
+                        Button {
+                            isRefreshing = true
+                            onRefresh { isRefreshing = false }
+                        } label: {
+                            if isRefreshing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption)
+                            }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
+                        .disabled(isRefreshing)
+                        .help("Pull the model catalog again")
+                    }
+                }
 
                 if availableModelIDs.isEmpty {
-                    Text("No models pulled yet — the catalog refreshes automatically (hourly).")
+                    Text("No models pulled yet — use the refresh button to pull the catalog now.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
@@ -411,16 +450,11 @@ struct ProviderModelSelectionView: View {
                 }
 
                 HStack(spacing: 8) {
-                    Button("Select all") {
-                        selected = Set(availableModelIDs)
+                    Button(allSelected ? "Deselect all" : "Select all") {
+                        selected = allSelected ? [] : Set(availableModelIDs)
                     }
                     .controlSize(.small)
-                    .disabled(availableModelIDs.isEmpty || selected.count == availableModelIDs.count)
-                    Button("Deselect all") {
-                        selected = []
-                    }
-                    .controlSize(.small)
-                    .disabled(selected.isEmpty)
+                    .disabled(availableModelIDs.isEmpty)
                     Spacer()
                     Button("Cancel") {
                         showingPopover = false
@@ -454,6 +488,17 @@ struct ProviderModelSelectionView: View {
                 selected = Set(availableModelIDs)
             }
         }
+        .onChange(of: availableModelIDs) { newPool in
+            // A refresh can land while the popover is open. An explicit saved
+            // selection stays authoritative; otherwise follow the new pool so
+            // newly pulled models are checked rather than silently excluded.
+            guard showingPopover else { return }
+            if let savedSelection {
+                selected = Set(savedSelection)
+            } else {
+                selected = Set(newPool)
+            }
+        }
     }
 }
 
@@ -470,6 +515,7 @@ struct CustomProviderRow: View {
     var onExpandChange: ((Bool) -> Void)? = nil
     var modelPool: [String] = []
     var savedSelection: [String]? = nil
+    var onRefreshModels: ((@escaping () -> Void) -> Void)? = nil
     
     @State private var isExpanded = false
     @State private var credentialToRemove: CustomProviderCredential?
@@ -559,7 +605,8 @@ struct CustomProviderRow: View {
                         savedSelection: savedModelSelection,
                         onSave: { modelIDs in
                             onSaveSelection(provider.id, modelIDs)
-                        }
+                        },
+                        onRefresh: onRefreshModels
                     )
                 }
             }
@@ -804,6 +851,9 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "codex"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
                         }
                     ) { EmptyView() }
 
@@ -828,6 +878,9 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "gemini"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
                         }
                     ) { EmptyView() }
 
@@ -871,6 +924,9 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "github-copilot"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
                         }
                     ) { EmptyView() }
 
@@ -971,6 +1027,9 @@ struct SettingsView: View {
                         savedSelection: serverManager.userSelectedModelIDs(forProviderID: "xai"),
                         onSaveSelection: { providerID, modelIDs in
                             serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
                         }
                     ) { EmptyView() }
                 }
@@ -1003,7 +1062,10 @@ struct SettingsView: View {
                                     expandedRowCount += expanded ? 1 : -1
                                 },
                                 modelPool: serverManager.catalogModelIDs(forProviderID: provider.id),
-                                savedSelection: serverManager.userSelectedModelIDs(forProviderID: provider.id)
+                                savedSelection: serverManager.userSelectedModelIDs(forProviderID: provider.id),
+                                onRefreshModels: { completion in
+                                    serverManager.refreshProxyCatalogNow(completion: completion)
+                                }
                             )
                         }
                     }
