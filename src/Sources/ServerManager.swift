@@ -1147,10 +1147,14 @@ class ServerManager: ObservableObject {
         let openRouterEnabled = enabledProviders["openrouter"] ?? true
         let ollamaEnabled = enabledProviders["ollama"] ?? true
         let ollamaBaseURL = ollamaEnabled ? ProxyProviderCatalog.ollamaDefaultBaseURL : nil
+        let ollamaCloudAPIKeys = loadCustomProviderCredentialRecords()
+            .filter { $0.providerID == "ollama-cloud" && !$0.isDisabled }
+            .map(\.apiKey)
         let zaiKeys = loadZaiAPIKeys()
         proxyCatalogClient.refresh(
             openRouterEnabled: openRouterEnabled,
             ollamaBaseURL: ollamaBaseURL,
+            ollamaCloudAPIKeys: ollamaCloudAPIKeys,
             zaiAPIKeys: zaiKeys
         ) { [weak self] result in
             defer { completion?() }
