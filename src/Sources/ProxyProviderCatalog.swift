@@ -93,6 +93,7 @@ enum ProxyProviderCatalog {
     /// each is fetched from its own upstream endpoint at refresh time.
     static let openRouterAPIURL = "https://openrouter.ai/api/v1"
     static let zaiAPIBaseURL = "https://api.z.ai/api/coding/paas/v4"
+    static let ollamaCloudAPIURL = "https://ollama.com/v1"
     static let ollamaDefaultBaseURL = "http://localhost:11434"
     static let ollamaTagsPath = "/api/tags"
 
@@ -122,6 +123,36 @@ enum ProxyProviderCatalog {
             id: "openrouter",
             api: openRouterAPIURL,
             name: "OpenRouter",
+            models: models
+        )
+    }
+
+    /// Ollama Cloud's OpenAI-compatible `/v1/models` response.
+    /// The upstream model IDs are authoritative; no model names are synthesized.
+    static func decodeOllamaCloud(from data: Data) -> ProxyProviderEntry? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["data"] as? [[String: Any]] else {
+            return nil
+        }
+        let models = items.compactMap { item -> ProxyProviderModel? in
+            guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+            return ProxyProviderModel(
+                id: id,
+                name: (item["name"] as? String) ?? id,
+                reasoning: (item["reasoning"] as? Bool) ?? false,
+                toolCall: true,
+                limit: ProxyProviderModelLimit(
+                    context: (item["context_length"] as? Int) ?? 128_000,
+                    output: (item["max_completion_tokens"] as? Int) ?? 8_192
+                ),
+                modalities: nil
+            )
+        }.sorted { $0.id < $1.id }
+        guard !models.isEmpty else { return nil }
+        return ProxyProviderEntry(
+            id: "ollama-cloud",
+            api: ollamaCloudAPIURL,
+            name: "Ollama Cloud",
             models: models
         )
     }
@@ -378,6 +409,7 @@ final class ProxyProviderCatalogClient {
     func refresh(
         openRouterEnabled: Bool = false,
         ollamaBaseURL: String? = nil,
+        ollamaCloudAPIKeys: [String] = [],
         zaiAPIKeys: [String] = [],
         completion: @escaping (Result<ProxyProviderCatalogRefreshResult, Error>) -> Void
     ) {
@@ -407,6 +439,7 @@ final class ProxyProviderCatalogClient {
                     let extras = self.fetchExtras(
                         openRouterEnabled: openRouterEnabled,
                         ollamaBaseURL: ollamaBaseURL,
+                        ollamaCloudAPIKeys: ollamaCloudAPIKeys,
                         zaiAPIKeys: zaiAPIKeys
                     )
                     for (providerID, entry) in extras {
@@ -435,6 +468,7 @@ final class ProxyProviderCatalogClient {
     private func fetchExtras(
         openRouterEnabled: Bool,
         ollamaBaseURL: String?,
+        ollamaCloudAPIKeys: [String],
         zaiAPIKeys: [String]
     ) -> [(String, ProxyProviderEntry?)] {
         var results: [(String, ProxyProviderEntry?)] = []
@@ -461,6 +495,21 @@ final class ProxyProviderCatalogClient {
                     entry = ProxyProviderCatalog.decodeOllama(from: data, baseURL: ollamaBaseURL)
                 }
                 lock.lock(); results.append(("ollama", entry)); lock.unlock()
+                group.leave()
+            }
+        }
+
+        if let firstKey = ollamaCloudAPIKeys.first {
+            group.enter()
+            fetchExtra(
+                url: URL(string: ProxyProviderCatalog.ollamaCloudAPIURL + "/models")!,
+                authorization: firstKey
+            ) { result in
+                var entry: ProxyProviderEntry?
+                if case .success(let data) = result {
+                    entry = ProxyProviderCatalog.decodeOllamaCloud(from: data)
+                }
+                lock.lock(); results.append(("ollama-cloud", entry)); lock.unlock()
                 group.leave()
             }
         }
