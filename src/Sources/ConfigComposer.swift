@@ -118,7 +118,8 @@ enum ConfigComposer {
                 seenProviderIDs.insert(providerID)
             }
 
-            if reservedProviderIDs.contains(providerID), providerID != ProviderCatalog.managedZAIProviderName {
+            if reservedProviderIDs.contains(providerID),
+               !ProviderCatalog.managedOpenAICompatibilityProviderIDs.contains(providerID) {
                 errors.append("Provider '\(providerID)' is reserved and cannot be declared under openai-compatibility.")
                 continue
             }
@@ -145,7 +146,7 @@ enum ConfigComposer {
                 }
             }
 
-            if providerID == ProviderCatalog.managedZAIProviderName {
+            if ProviderCatalog.managedOpenAICompatibilityProviderIDs.contains(providerID) {
                 continue
             }
 
@@ -216,6 +217,9 @@ enum ConfigComposer {
                 managedZAIBaseEntry = sanitizedEntry
                 continue
             }
+            if ProviderCatalog.managedOpenAICompatibilityProviderIDs.contains(providerName) {
+                continue
+            }
             
             if managedCustomProviderIDs.contains(providerName) {
                 if disabledCustomProviderIDs.contains(providerName) {
@@ -283,6 +287,32 @@ enum ConfigComposer {
                 apiKeyEntries: deduplicatedAPIKeyEntries(openRouterAuthKeys)
             )
             mergedOpenAICompatibility.append(openRouterEntry)
+        }
+
+        // Vercel AI Gateway provider entry — models pulled from ai-gateway.vercel.sh /models.
+        let vercelAuthKeys = customProviderAuthRecords
+            .filter { $0.providerID == "vercel" && !$0.isDisabled }
+            .map { ["api-key": $0.apiKey] }
+        let vercelEnabled = (enabledProviders["vercel"] ?? true)
+        let vercelCatalogModels = catalogModelRowsByProviderID["vercel"] ?? []
+        let vercelAllowedNames = Set(vercelCatalogModels.compactMap { $0["name"] })
+        var vercelUserModels = selfModels(from: mergedRoot["openai-compatibility"], providerID: "vercel")
+        if !vercelAllowedNames.isEmpty {
+            vercelUserModels = vercelUserModels.filter { row in
+                vercelAllowedNames.contains(row["name"] ?? "")
+            }
+        }
+        let vercelModels = !vercelUserModels.isEmpty
+            ? vercelUserModels
+            : (userOverrideProviderIDs.contains("vercel") ? [] : vercelCatalogModels)
+        if vercelEnabled, !vercelModels.isEmpty || !vercelAuthKeys.isEmpty {
+            let vercelEntry = makeManagedProviderEntry(
+                name: "vercel",
+                baseURL: ProxyProviderCatalog.vercelAPIURL,
+                models: vercelModels,
+                apiKeyEntries: deduplicatedAPIKeyEntries(vercelAuthKeys)
+            )
+            mergedOpenAICompatibility.append(vercelEntry)
         }
         
         if mergedOpenAICompatibility.isEmpty {

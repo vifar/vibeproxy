@@ -3,6 +3,13 @@ import Foundation
 enum ProviderCatalog {
     static let managedZAIProviderName = "zai"
 
+    /// First-class openai-compat providers. Hidden from the custom-provider UI
+    /// via `reservedCustomProviderKeys`, but allowed under `openai-compatibility`
+    /// so user model selection can persist `{name, models}` without a base-url.
+    static let managedOpenAICompatibilityProviderIDs: Set<String> = [
+        managedZAIProviderName, "ollama", "openrouter", "vercel"
+    ]
+
     /// Managed proxy providers (catalog-synchronized openai-compatibility entries).
     static let managedProxyProviderDefinitions: [String: String] = ProxyProviderCatalog.supportedProviderDefinitions
 
@@ -20,5 +27,5 @@ enum ProviderCatalog {
 
     static let reservedCustomProviderKeys = Set(oauthProviderKeys.keys)
         .union(oauthProviderKeys.values)
-        .union([managedZAIProviderName, "ollama", "openrouter"])
+        .union(managedOpenAICompatibilityProviderIDs)
 }

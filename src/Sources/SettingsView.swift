@@ -109,6 +109,67 @@ struct VercelGatewayControls: View {
     }
 }
 
+/// Vercel catalog model-type multiselect shown under Vercel auth accounts
+struct VercelModelTypeControls: View {
+    @ObservedObject var serverManager: ServerManager
+    @State private var isExpanded = false
+
+    var body: some View {
+        let types = serverManager.availableVercelModelTypes()
+        let enabledCount = types.filter { serverManager.vercelEnabledModelTypes.contains($0) }.count
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("Model types")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if types.isEmpty {
+                    Text("• none loaded")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("• \(enabledCount) of \(types.count) enabled")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }
+
+            if isExpanded {
+                if types.isEmpty {
+                    Text("Refresh models after connecting to load types")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(types, id: \.self) { type in
+                        Toggle(isOn: Binding(
+                            get: { serverManager.vercelEnabledModelTypes.contains(type) },
+                            set: { serverManager.setVercelModelType(type, enabled: $0) }
+                        )) {
+                            Text(type.prefix(1).uppercased() + type.dropFirst())
+                                .font(.caption)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 28)
+        .padding(.top, 4)
+    }
+}
+
+
 /// A row displaying a service with its connected accounts and add button
 struct ServiceRow<ExtraContent: View>: View {
     let serviceType: ServiceType
@@ -185,7 +246,7 @@ struct ServiceRow<ExtraContent: View>: View {
                     .controlSize(.small)
                 }
 
-                if isEnabled, !accounts.isEmpty {
+                if isEnabled, !accounts.isEmpty || onRefreshModels != nil || !modelPool.isEmpty {
                     ProviderModelSelectionView(
                         providerID: serviceType.rawValue,
                         availableModelIDs: modelPool,
@@ -237,7 +298,6 @@ struct ServiceRow<ExtraContent: View>: View {
                                     showingRemoveConfirmation = true
                                 }
                             }
-                            extraContent()
                         }
                         .padding(.top, 4)
                     }
@@ -247,6 +307,10 @@ struct ServiceRow<ExtraContent: View>: View {
                         .foregroundColor(.secondary)
                         .padding(.leading, 28)
                 }
+
+                // Provider-specific controls (model types, gateway toggles, …)
+                // Always visible while enabled — not buried behind expand/accounts.
+                extraContent()
             } else if let disabledReasonText, !disabledReasonText.isEmpty {
                 Text(disabledReasonText)
                     .font(.caption)
@@ -721,6 +785,8 @@ struct SettingsView: View {
     @State private var ollamaApiKey = ""
     @State private var showingOpenRouterApiKeyPrompt = false
     @State private var openRouterApiKey = ""
+    @State private var showingVercelApiKeyPrompt = false
+    @State private var vercelApiKey = ""
     @State private var selectedCustomProvider: CustomProviderDefinition?
     @State private var customProviderApiKey = ""
     @State private var expandedRowCount = 0
@@ -1003,8 +1069,43 @@ struct SettingsView: View {
                         onDisconnect: { account in disconnectAccount(account) },
                         onToggleDisabled: { account in toggleAccountDisabled(account) },
                         onToggleEnabled: { enabled in serverManager.setProviderEnabled("openrouter", enabled: enabled) },
-                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 }
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "openrouter"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "openrouter"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
+                        }
                     ) { EmptyView() }
+
+                    ServiceRow(
+                        serviceType: .vercel,
+                        iconName: "",
+                        iconSystemName: "cloud",
+                        accounts: authManager.accounts(for: .vercel),
+                        isAuthenticating: authenticatingService == .vercel,
+                        helpText: "Vercel AI Gateway for multi-model access. Get your key at https://vercel.com/docs/ai-gateway/authentication-and-byok/api-keys or the Vercel dashboard.",
+                        isEnabled: serverManager.isProviderEnabled("vercel"),
+                        isToggleLocked: serverManager.isProviderToggleLocked("vercel"),
+                        toggleHelpText: serverManager.providerConfigLockReason("vercel"),
+                        disabledReasonText: serverManager.providerConfigLockReason("vercel"),
+                        customTitle: nil,
+                        onConnect: { showingVercelApiKeyPrompt = true },
+                        onDisconnect: { account in disconnectAccount(account) },
+                        onToggleDisabled: { account in toggleAccountDisabled(account) },
+                        onToggleEnabled: { enabled in serverManager.setProviderEnabled("vercel", enabled: enabled) },
+                        onExpandChange: { expanded in expandedRowCount += expanded ? 1 : -1 },
+                        modelPool: serverManager.catalogModelIDs(forProviderID: "vercel"),
+                        savedSelection: serverManager.userSelectedModelIDs(forProviderID: "vercel"),
+                        onSaveSelection: { providerID, modelIDs in
+                            serverManager.setUserSelectedModelIDs(modelIDs, forProviderID: providerID)
+                        },
+                        onRefreshModels: { completion in
+                            serverManager.refreshProxyCatalogNow(completion: completion)
+                        }
+                    ) { VercelModelTypeControls(serverManager: serverManager) }
 
                     ServiceRow(
                         serviceType: .xai,
@@ -1226,6 +1327,32 @@ struct SettingsView: View {
             .padding(24)
             .frame(width: 400)
         }
+        .sheet(isPresented: $showingVercelApiKeyPrompt) {
+            VStack(spacing: 16) {
+                Text("Vercel API Key")
+                    .font(.headline)
+                Text("Enter your Vercel AI Gateway API key from https://vercel.com/docs/ai-gateway/authentication-and-byok/api-keys")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                SecureField("", text: $vercelApiKey)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 300)
+                HStack(spacing: 12) {
+                    Button("Cancel") {
+                        showingVercelApiKeyPrompt = false
+                        vercelApiKey = ""
+                    }
+                    Button("Add Key") {
+                        showingVercelApiKeyPrompt = false
+                        startVercelAuth(apiKey: vercelApiKey)
+                    }
+                    .disabled(vercelApiKey.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(24)
+            .frame(width: 400)
+        }
         .sheet(item: $selectedCustomProvider, onDismiss: {
             customProviderApiKey = ""
         }) { provider in
@@ -1331,7 +1458,12 @@ struct SettingsView: View {
             return // handled separately with API key prompt
         case .promptForOpenRouterAPIKey:
             authenticatingService = nil
-            return // handled separately with API key prompt
+            showingOpenRouterApiKeyPrompt = true
+            return
+        case .promptForVercelAPIKey:
+            authenticatingService = nil
+            showingVercelApiKeyPrompt = true
+            return
         }
         
         serverManager.runAuthCommand(command) { success, output in
@@ -1379,6 +1511,8 @@ struct SettingsView: View {
             return "✓ Ollama API key added successfully.\n\nYou can now use Ollama models through the proxy."
         case .openrouter:
             return "✓ OpenRouter API key added successfully.\n\nYou can now use OpenRouter models through the proxy."
+        case .vercel:
+            return "✓ Vercel API key added successfully.\n\nYou can now use Vercel AI Gateway models through the proxy."
         case .xai:
             return "🌐 Browser opened for Grok (xAI) authentication.\n\nPlease complete the login in your browser.\n\nThe app will automatically detect your credentials."
         }
@@ -1468,6 +1602,30 @@ struct SettingsView: View {
                 if success {
                     self.authResultSuccess = true
                     self.authResultMessage = self.successMessage(for: .openrouter)
+                    self.showingAuthResult = true
+                    self.authManager.checkAuthStatus()
+                } else {
+                    self.authResultSuccess = false
+                    self.authResultMessage = "Failed to save API key.\n\nDetails: \(output.isEmpty ? "Unknown error" : output)"
+                    self.showingAuthResult = true
+                }
+            }
+        }
+    }
+
+    private func startVercelAuth(apiKey: String) {
+        authenticatingService = .vercel
+        NSLog("[SettingsView] Adding Vercel API key")
+
+        serverManager.saveVercelAPIKey(apiKey) { success, output in
+            NSLog("[SettingsView] Vercel key save completed - success: %d, output: %@", success, output)
+            DispatchQueue.main.async {
+                self.authenticatingService = nil
+                self.vercelApiKey = ""
+
+                if success {
+                    self.authResultSuccess = true
+                    self.authResultMessage = self.successMessage(for: .vercel)
                     self.showingAuthResult = true
                     self.authManager.checkAuthStatus()
                 } else {

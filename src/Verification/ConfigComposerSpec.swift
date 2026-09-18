@@ -356,6 +356,10 @@ struct ConfigComposerSpec {
                     [
                         "name": "zai",
                         "base-url": ""
+                    ],
+                    [
+                        "name": "vercel",
+                        "models": [["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]]
                     ]
                 ]
             ]
@@ -369,6 +373,27 @@ struct ConfigComposerSpec {
                 validationErrors,
                 ["Custom provider 'nvidia' must define a non-empty base-url."],
                 "only non-reserved custom providers with blank base-url should fail validation",
+                recorder: recorder
+            )
+        }
+
+        run("validateCustomProviders accepts managed openai-compat providers without base-url", recorder: recorder) {
+            let root: [String: Any] = [
+                "openai-compatibility": [
+                    ["name": "zai", "models": [["name": "glm-4.7", "alias": "glm-4.7"]]],
+                    ["name": "ollama", "models": [["name": "llama3.2", "alias": "llama3.2"]]],
+                    ["name": "openrouter", "models": [["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]]],
+                    ["name": "vercel", "models": [["name": "anthropic/claude-sonnet-4.5", "alias": "anthropic/claude-sonnet-4.5"]]]
+                ]
+            ]
+            let errors = ConfigComposer.validateCustomProviders(
+                in: root,
+                reservedProviderIDs: reservedProviderIDs
+            )
+            expectEqual(
+                errors,
+                [],
+                "managed openai-compat providers may persist model selection without a base-url",
                 recorder: recorder
             )
         }
@@ -774,6 +799,94 @@ struct ConfigComposerSpec {
                 stringArray(exclusions["xai"]),
                 ["grok-3-mini", "grok-4.5"],
                 "unselected catalog models must be excluded",
+                recorder: recorder
+            )
+        }
+
+        run("composeRuntimeConfig synthesizes a single vercel entry from user model selection", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "vercel",
+                        "models": [["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [
+                    ConfigProviderAuthRecord(providerID: "vercel", apiKey: "vck_test", isDisabled: false)
+                ],
+                includeManagedZAIProvider: false,
+                enabledProviders: ["vercel": true],
+                catalogModelRowsByProviderID: [
+                    "vercel": [
+                        ["name": "anthropic/claude-sonnet-4.5", "alias": "anthropic/claude-sonnet-4.5"],
+                        ["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]
+                    ]
+                ],
+                userOverrideProviderIDs: ["vercel"]
+            )
+
+            let vercelEntries = providerEntries(in: runtime).filter { ($0["name"] as? String) == "vercel" }
+            expectEqual(vercelEntries.count, 1, "user-authored vercel must not duplicate the managed entry", recorder: recorder)
+            expectEqual(
+                vercelEntries.first?["base-url"] as? String,
+                ProxyProviderCatalog.vercelAPIURL,
+                "managed vercel runtime entry must use the AI Gateway base-url",
+                recorder: recorder
+            )
+            expectEqual(
+                modelAliases(in: vercelEntries.first ?? [:]),
+                ["openai/gpt-5.6-luna"],
+                "user-selected vercel models must beat catalog rows",
+                recorder: recorder
+            )
+        }
+
+        run("composeRuntimeConfig drops user-selected vercel models outside enabled catalog types", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "vercel",
+                        "models": [
+                            ["name": "typesafe-ai/jev", "alias": "typesafe-ai/jev"],
+                            ["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [
+                    ConfigProviderAuthRecord(providerID: "vercel", apiKey: "vck_test", isDisabled: false)
+                ],
+                includeManagedZAIProvider: false,
+                enabledProviders: ["vercel": true],
+                catalogModelRowsByProviderID: [
+                    "vercel": [
+                        ["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]
+                    ]
+                ],
+                userOverrideProviderIDs: ["vercel"]
+            )
+
+            let vercelEntries = providerEntries(in: runtime).filter { ($0["name"] as? String) == "vercel" }
+            expectEqual(vercelEntries.count, 1, "filtered vercel selection must still emit one managed entry", recorder: recorder)
+            expectEqual(
+                modelAliases(in: vercelEntries.first ?? [:]),
+                ["openai/gpt-5.6-luna"],
+                "user-selected vercel models must be intersected with enabled catalog types",
                 recorder: recorder
             )
         }

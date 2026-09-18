@@ -4,6 +4,18 @@ All notable changes to VibeProxy will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Vercel AI Gateway provider** - First-class `vercel` openai-compatibility provider (`https://ai-gateway.vercel.sh/v1`) with API-key auth, public `/models` catalog pull, enable/disable, and per-model selection in Settings
+- **Vercel model-type filter** - Multiselect under Vercel accounts (Language, Evaluation, Image, …); defaults to Language so `typesafe-ai/jev` appears when Evaluation is enabled
+- **OpenRouter model selection** - Wired the existing ProviderModelSelectionView picker/filter to OpenRouter (same UX as Vercel and OAuth providers)
+
+### Fixed
+- **Reserved vercel/openrouter/ollama config** - First-class openai-compat providers can persist model selection under `openai-compatibility` without being rejected as reserved names
+- **Vercel API key logging** - `saveVercelAPIKey` logs only provider ID/label, never the raw Bearer key from credential save results
+- **Vercel type-filter selection** - Changing `vercelEnabledModelTypes` prunes persisted model selection and composition to models still allowed by the filter
+
 ## [1.8.50] - 2026-01-13
 
 ## [1.8.293] - 2026-09-11

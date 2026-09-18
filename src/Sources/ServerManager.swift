@@ -81,6 +81,23 @@ class ServerManager: ObservableObject {
     }
     var onVercelConfigChanged: (() -> Void)?
 
+    /// Model types enabled for the managed Vercel openai-compat provider.
+    /// Defaults to language-only; persisted as a sorted string array.
+    static let defaultVercelEnabledModelTypes: Set<String> = ["language"]
+    @Published var vercelEnabledModelTypes: Set<String> = ServerManager.defaultVercelEnabledModelTypes {
+        didSet {
+            UserDefaults.standard.set(
+                Array(vercelEnabledModelTypes).sorted(),
+                forKey: "vercelEnabledModelTypes"
+            )
+            guard !isBootstrappingVercelModelTypes else { return }
+            pruneVercelSelectionToEnabledTypes()
+            reloadCustomProviders()
+            requestConfigUpdate()
+        }
+    }
+    private var isBootstrappingVercelModelTypes = true
+
     /// Helper class to capture output text across closures
     private class OutputCapture {
         var text = ""
@@ -149,6 +166,13 @@ class ServerManager: ObservableObject {
         vercelApiKey = UserDefaults.standard.string(forKey: "vercelApiKey") ?? ""
         proxyCatalogProviders = proxyCatalogCache.load()?.providers ?? [:]
         uiProviderPools = proxyCatalogCache.load()?.uiPools ?? [:]
+        if let savedTypes = UserDefaults.standard.array(forKey: "vercelEnabledModelTypes") as? [String],
+           !savedTypes.isEmpty {
+            vercelEnabledModelTypes = Set(savedTypes)
+        } else {
+            vercelEnabledModelTypes = Self.defaultVercelEnabledModelTypes
+        }
+        isBootstrappingVercelModelTypes = false
         reloadCustomProviders()
         markObservedConfigInputsCurrent()
         startProxyCatalogRefresh()
@@ -806,6 +830,31 @@ class ServerManager: ObservableObject {
         }
     }
 
+    func saveVercelAPIKey(_ apiKey: String, completion: @escaping (Bool, String) -> Void) {
+        credentialMutationQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let saveResult = try self.customProviderCredentialStore.save(providerID: "vercel", apiKey: apiKey)
+                switch saveResult {
+                case .created(let record):
+                    self.addLog("✓ Saved API key for Vercel: \(record.providerID)")
+                case .alreadyPresent(let record):
+                    self.addLog("✓ Vercel key already present: \(record.label)")
+                case .reenabled(let record):
+                    self.addLog("✓ Re-enabled Vercel key: \(record.label)")
+                }
+                self.refreshAuthBackedConfiguration()
+                DispatchQueue.main.async {
+                    completion(true, "API key saved successfully")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(false, error.localizedDescription)
+                }
+            }
+        }
+    }
+
     func handleObservedConfigInputsChanged() {
         guard markObservedConfigInputsChanged() else {
             return
@@ -992,6 +1041,11 @@ class ServerManager: ObservableObject {
     func catalogModelIDs(forProviderID providerID: String) -> [String] {
         proxyCatalogStateQueue.sync {
             if let entry = proxyCatalogProviders[providerID] {
+                if providerID == "vercel" {
+                    return entry.models
+                        .filter { vercelEnabledModelTypes.contains($0.type ?? "language") }
+                        .map(\.id)
+                }
                 return entry.models.map(\.id)
             }
             if let entry = uiProviderPools[providerID] {
@@ -1039,6 +1093,57 @@ class ServerManager: ObservableObject {
         addLog("✓ Cleared model selection for \(providerID); catalog models restored")
         reloadCustomProviders()
         requestConfigUpdate()
+    }
+
+    /// Unique model types present in the Vercel catalog, using `"language"` when
+    /// a model has a nil/missing type (old-cache compat). Sorted alphabetically.
+    func availableVercelModelTypes() -> [String] {
+        proxyCatalogStateQueue.sync {
+            guard let entry = proxyCatalogProviders["vercel"] else { return [] }
+            return Array(Set(entry.models.map { $0.type ?? "language" })).sorted()
+        }
+    }
+
+    /// Enable or disable a Vercel model type. The enabled set is never allowed
+    /// to become empty — disabling the last type keeps it (or falls back to language).
+    func setVercelModelType(_ type: String, enabled: Bool) {
+        var next = vercelEnabledModelTypes
+        if enabled {
+            next.insert(type)
+        } else {
+            next.remove(type)
+            if next.isEmpty {
+                next = Self.defaultVercelEnabledModelTypes
+            }
+        }
+        vercelEnabledModelTypes = next
+    }
+
+    /// Drop persisted Vercel selections whose model type is no longer enabled.
+    /// No-ops when there is no selection or the catalog has not loaded yet.
+    private func pruneVercelSelectionToEnabledTypes() {
+        guard let selected = userModelSelectionStore.selectedModelIDs(forProviderID: "vercel"),
+              !selected.isEmpty else {
+            return
+        }
+        let allowed = catalogModelIDs(forProviderID: "vercel")
+        guard !allowed.isEmpty else {
+            return
+        }
+        let allowedSet = Set(allowed)
+        let pruned = selected.filter { allowedSet.contains($0) }
+        guard pruned.count != selected.count else {
+            return
+        }
+        if pruned.isEmpty {
+            if let errorMessage = userModelSelectionStore.removeModelSelection(forProviderID: "vercel") {
+                addLog("❌ \(errorMessage)")
+            }
+            return
+        }
+        if let errorMessage = userModelSelectionStore.setSelectedModelIDs(pruned, forProviderID: "vercel") {
+            addLog("❌ \(errorMessage)")
+        }
     }
 
     func getLogs() -> [String] {
@@ -1110,9 +1215,16 @@ class ServerManager: ObservableObject {
 
     private func proxyCatalogModelRows() -> [String: [[String: String]]] {
         proxyCatalogStateQueue.sync {
-            Dictionary(
+            let enabledTypes = vercelEnabledModelTypes
+            return Dictionary(
                 uniqueKeysWithValues: proxyCatalogProviders.map { providerID, entry in
-                    (providerID, ProxyProviderCatalog.modelRows(from: entry))
+                    let rows: [[String: String]]
+                    if providerID == "vercel" {
+                        rows = ProxyProviderCatalog.modelRows(from: entry, allowedTypes: enabledTypes)
+                    } else {
+                        rows = ProxyProviderCatalog.modelRows(from: entry)
+                    }
+                    return (providerID, rows)
                 }
             )
         }
@@ -1145,6 +1257,7 @@ class ServerManager: ObservableObject {
 
     private func refreshProxyCatalog(completion: (() -> Void)? = nil) {
         let openRouterEnabled = enabledProviders["openrouter"] ?? true
+        let vercelEnabled = enabledProviders["vercel"] ?? true
         let ollamaEnabled = enabledProviders["ollama"] ?? true
         let ollamaBaseURL = ollamaEnabled ? ProxyProviderCatalog.ollamaDefaultBaseURL : nil
         let ollamaCloudAPIKeys = loadCustomProviderCredentialRecords()
@@ -1153,6 +1266,7 @@ class ServerManager: ObservableObject {
         let zaiKeys = loadZaiAPIKeys()
         proxyCatalogClient.refresh(
             openRouterEnabled: openRouterEnabled,
+            vercelEnabled: vercelEnabled,
             ollamaBaseURL: ollamaBaseURL,
             ollamaCloudAPIKeys: ollamaCloudAPIKeys,
             zaiAPIKeys: zaiKeys
@@ -1195,7 +1309,7 @@ class ServerManager: ObservableObject {
 
     private func userOverrideProviderIDs(in userRoot: [String: Any]) -> Set<String> {
         let managedProviderIDs = Set(ProviderCatalog.managedProxyProviderDefinitions.keys)
-            .union(["ollama", "openrouter", "zai"])
+            .union(ProviderCatalog.managedOpenAICompatibilityProviderIDs)
         return Set(ConfigComposer.stringKeyedDictionaryArray(userRoot["openai-compatibility"]).compactMap { entry in
             guard let name = ConfigComposer.normalizedString(entry["name"]),
                   managedProviderIDs.contains(name),
