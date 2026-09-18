@@ -72,7 +72,7 @@ Want to build it yourself? See [**INSTALLATION.md**](INSTALLATION.md) for detail
 1. Launch VibeProxy - you'll see a menu bar icon
 2. Click the icon and select "Open Settings"
 3. The server will start automatically
-4. Click "Connect" for Claude Code, Codex, Gemini, Kimi, Qwen, or Antigravity to authenticate, or "Add Account" for Z.AI GLM
+4. Click "Connect" for Claude Code, Codex, Gemini, Kimi, Qwen, or Antigravity to authenticate, or "Add Account" for Z.AI GLM, OpenRouter, or Vercel
 
 ### Authentication
 
@@ -82,7 +82,7 @@ When you click "Connect" for an OAuth provider:
 3. VibeProxy automatically detects your credentials
 4. Status updates to show you're connected
 
-When you click "Add Account" for Z.AI GLM:
+When you click "Add Account" for Z.AI GLM, OpenRouter, or Vercel:
 1. Paste your provider API key
 2. VibeProxy stores it in `~/.cli-proxy-api/`
 3. The provider becomes available through the proxy immediately

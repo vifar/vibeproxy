@@ -13,6 +13,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 - **Reserved vercel/openrouter/ollama config** - First-class openai-compat providers can persist model selection under `openai-compatibility` without being rejected as reserved names
+- **Vercel API key logging** - `saveVercelAPIKey` logs only provider ID/label, never the raw Bearer key from credential save results
+- **Vercel type-filter selection** - Changing `vercelEnabledModelTypes` prunes persisted model selection and composition to models still allowed by the filter
 
 ## [1.8.50] - 2026-01-13
 

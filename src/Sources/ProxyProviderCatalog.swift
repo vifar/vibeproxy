@@ -439,7 +439,7 @@ final class ProxyProviderCatalogClient {
 
     private let cache: ProxyProviderCatalogCache
     private let fetchData: FetchData
-    /// Optional per-provider pull sources (OpenRouter, Ollama, Z.AI). Injectable
+    /// Optional per-provider pull sources (OpenRouter, Vercel, Ollama, Z.AI). Injectable
     /// so the refresh's threading contract can be exercised without live network
     /// endpoints — the extra fetches are what the outer completion blocks on.
     private let fetchExtrasData: ((URL, String?, @escaping (Result<Data, Error>) -> Void) -> Void)?
