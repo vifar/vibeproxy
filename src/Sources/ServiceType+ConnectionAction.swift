@@ -4,6 +4,7 @@ enum ServiceConnectionAction: Equatable {
     case promptForZAIAPIKey
     case promptForOllamaAPIKey
     case promptForOpenRouterAPIKey
+    case promptForVercelAPIKey
 }
 
 extension ServiceType {
@@ -29,6 +30,8 @@ extension ServiceType {
             return .promptForOllamaAPIKey
         case .openrouter:
             return .promptForOpenRouterAPIKey
+        case .vercel:
+            return .promptForVercelAPIKey
         case .xai:
             return .authCommand(.xaiLogin)
         }

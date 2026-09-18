@@ -17,6 +17,7 @@ struct ProxyProviderModel: Codable, Equatable {
     let toolCall: Bool
     let limit: ProxyProviderModelLimit
     let modalities: ProxyProviderModelModalities?
+    let type: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -25,6 +26,7 @@ struct ProxyProviderModel: Codable, Equatable {
         case toolCall = "tool_call"
         case limit
         case modalities
+        case type
     }
 }
 
@@ -92,6 +94,7 @@ enum ProxyProviderCatalog {
     /// Additional pull sources. These are not part of the shared catalog file;
     /// each is fetched from its own upstream endpoint at refresh time.
     static let openRouterAPIURL = "https://openrouter.ai/api/v1"
+    static let vercelAPIURL = "https://ai-gateway.vercel.sh/v1"
     static let zaiAPIBaseURL = "https://api.z.ai/api/coding/paas/v4"
     static let ollamaCloudAPIURL = "https://ollama.com/v1"
     static let ollamaDefaultBaseURL = "http://localhost:11434"
@@ -115,7 +118,8 @@ enum ProxyProviderCatalog {
                 reasoning: (item["architecture"] as? [String: Any])?["reasoning"] as? Bool ?? false,
                 toolCall: true,
                 limit: ProxyProviderModelLimit(context: max(context, 1), output: max(output, 1)),
-                modalities: nil
+                modalities: nil,
+                type: nil
             )
         }.sorted { $0.id < $1.id }
         guard !models.isEmpty else { return nil }
@@ -123,6 +127,49 @@ enum ProxyProviderCatalog {
             id: "openrouter",
             api: openRouterAPIURL,
             name: "OpenRouter",
+            models: models
+        )
+    }
+
+    /// Vercel AI Gateway public /models endpoint. `data[]` entries carry
+    /// id, name, context_window, max_tokens, tags, modalities, and type.
+    /// All models with a non-empty id are kept; `type` is recorded for filtering.
+    static func decodeVercel(from data: Data) -> ProxyProviderEntry? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["data"] as? [[String: Any]] else {
+            return nil
+        }
+        let models = items.compactMap { item -> ProxyProviderModel? in
+            guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+            let name = (item["name"] as? String) ?? id
+            let context = (item["context_window"] as? Int) ?? 128_000
+            let output = (item["max_tokens"] as? Int) ?? 8_192
+            let tags = item["tags"] as? [String]
+            let reasoning = tags?.contains("reasoning") ?? false
+            let toolCall = tags.map { $0.contains("tool-use") } ?? true
+            var modalities: ProxyProviderModelModalities?
+            if let modalitiesDict = item["modalities"] as? [String: Any] {
+                let input = (modalitiesDict["input"] as? [String]) ?? []
+                let outputMods = (modalitiesDict["output"] as? [String]) ?? []
+                if !input.isEmpty || !outputMods.isEmpty {
+                    modalities = ProxyProviderModelModalities(input: input, output: outputMods)
+                }
+            }
+            return ProxyProviderModel(
+                id: id,
+                name: name,
+                reasoning: reasoning,
+                toolCall: toolCall,
+                limit: ProxyProviderModelLimit(context: max(context, 1), output: max(output, 1)),
+                modalities: modalities,
+                type: item["type"] as? String
+            )
+        }.sorted { $0.id < $1.id }
+        guard !models.isEmpty else { return nil }
+        return ProxyProviderEntry(
+            id: "vercel",
+            api: vercelAPIURL,
+            name: "Vercel",
             models: models
         )
     }
@@ -145,7 +192,8 @@ enum ProxyProviderCatalog {
                     context: (item["context_length"] as? Int) ?? 128_000,
                     output: (item["max_completion_tokens"] as? Int) ?? 8_192
                 ),
-                modalities: nil
+                modalities: nil,
+                type: nil
             )
         }.sorted { $0.id < $1.id }
         guard !models.isEmpty else { return nil }
@@ -175,7 +223,8 @@ enum ProxyProviderCatalog {
                 reasoning: false,
                 toolCall: true,
                 limit: ProxyProviderModelLimit(context: 8_192, output: 4_096),
-                modalities: nil
+                modalities: nil,
+                type: nil
             )
         }.sorted { $0.id < $1.id }
         guard !models.isEmpty else { return nil }
@@ -202,7 +251,8 @@ enum ProxyProviderCatalog {
                 reasoning: false,
                 toolCall: true,
                 limit: ProxyProviderModelLimit(context: 262_144, output: 8_192),
-                modalities: nil
+                modalities: nil,
+                type: nil
             )
         }.sorted { $0.id < $1.id }
         guard !models.isEmpty else { return nil }
@@ -279,7 +329,19 @@ enum ProxyProviderCatalog {
     }
 
     static func modelRows(from entry: ProxyProviderEntry) -> [[String: String]] {
-        entry.models.map { ["name": $0.id, "alias": $0.id] }
+        modelRows(from: entry, allowedTypes: nil)
+    }
+
+    /// Build openai-compatibility model rows. When `allowedTypes` is non-nil,
+    /// keep only models whose `(type ?? "language")` is in the set.
+    static func modelRows(from entry: ProxyProviderEntry, allowedTypes: Set<String>?) -> [[String: String]] {
+        let models: [ProxyProviderModel]
+        if let allowedTypes {
+            models = entry.models.filter { allowedTypes.contains($0.type ?? "language") }
+        } else {
+            models = entry.models
+        }
+        return models.map { ["name": $0.id, "alias": $0.id] }
     }
 
     /// Decode model pools for the built-in OAuth providers (UI selection only).
@@ -309,7 +371,8 @@ enum ProxyProviderCatalog {
                         context: max((limit?["context"] as? Int) ?? 128_000, 1),
                         output: max((limit?["output"] as? Int) ?? 8_192, 1)
                     ),
-                    modalities: nil
+                    modalities: nil,
+                    type: nil
                 )
             }.sorted { $0.id < $1.id }
             guard !decoded.isEmpty else { continue }
@@ -408,6 +471,7 @@ final class ProxyProviderCatalogClient {
 
     func refresh(
         openRouterEnabled: Bool = false,
+        vercelEnabled: Bool = false,
         ollamaBaseURL: String? = nil,
         ollamaCloudAPIKeys: [String] = [],
         zaiAPIKeys: [String] = [],
@@ -438,6 +502,7 @@ final class ProxyProviderCatalogClient {
                     // one failure never blocks the others.
                     let extras = self.fetchExtras(
                         openRouterEnabled: openRouterEnabled,
+                        vercelEnabled: vercelEnabled,
                         ollamaBaseURL: ollamaBaseURL,
                         ollamaCloudAPIKeys: ollamaCloudAPIKeys,
                         zaiAPIKeys: zaiAPIKeys
@@ -467,6 +532,7 @@ final class ProxyProviderCatalogClient {
 
     private func fetchExtras(
         openRouterEnabled: Bool,
+        vercelEnabled: Bool,
         ollamaBaseURL: String?,
         ollamaCloudAPIKeys: [String],
         zaiAPIKeys: [String]
@@ -483,6 +549,18 @@ final class ProxyProviderCatalogClient {
                     entry = ProxyProviderCatalog.decodeOpenRouter(from: data)
                 }
                 lock.lock(); results.append(("openrouter", entry)); lock.unlock()
+                group.leave()
+            }
+        }
+
+        if vercelEnabled {
+            group.enter()
+            fetchExtra(url: URL(string: ProxyProviderCatalog.vercelAPIURL + "/models")!, authorization: nil) { result in
+                var entry: ProxyProviderEntry?
+                if case .success(let data) = result {
+                    entry = ProxyProviderCatalog.decodeVercel(from: data)
+                }
+                lock.lock(); results.append(("vercel", entry)); lock.unlock()
                 group.leave()
             }
         }
