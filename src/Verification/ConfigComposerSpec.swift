@@ -849,6 +849,48 @@ struct ConfigComposerSpec {
             )
         }
 
+        run("composeRuntimeConfig drops user-selected vercel models outside enabled catalog types", recorder: recorder) {
+            let baseRoot: [String: Any] = [
+                "openai-compatibility": [
+                    [
+                        "name": "vercel",
+                        "models": [
+                            ["name": "typesafe-ai/jev", "alias": "typesafe-ai/jev"],
+                            ["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let runtime = ConfigComposer.composeRuntimeConfig(
+                baseRoot: baseRoot,
+                reservedCustomProviderKeys: reservedProviderIDs,
+                disabledCustomProviderIDs: [],
+                disabledOAuthProviderKeys: [],
+                zaiAPIKeys: [],
+                customProviderAuthRecords: [
+                    ConfigProviderAuthRecord(providerID: "vercel", apiKey: "vck_test", isDisabled: false)
+                ],
+                includeManagedZAIProvider: false,
+                enabledProviders: ["vercel": true],
+                catalogModelRowsByProviderID: [
+                    "vercel": [
+                        ["name": "openai/gpt-5.6-luna", "alias": "openai/gpt-5.6-luna"]
+                    ]
+                ],
+                userOverrideProviderIDs: ["vercel"]
+            )
+
+            let vercelEntries = providerEntries(in: runtime).filter { ($0["name"] as? String) == "vercel" }
+            expectEqual(vercelEntries.count, 1, "filtered vercel selection must still emit one managed entry", recorder: recorder)
+            expectEqual(
+                modelAliases(in: vercelEntries.first ?? [:]),
+                ["openai/gpt-5.6-luna"],
+                "user-selected vercel models must be intersected with enabled catalog types",
+                recorder: recorder
+            )
+        }
+
         run("composeAdditiveBaseConfig strips reserved oauth openai-compatibility entries", recorder: recorder) {
             let bundledRoot: [String: Any] = [
                 "port": 8318,

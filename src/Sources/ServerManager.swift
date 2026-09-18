@@ -91,6 +91,7 @@ class ServerManager: ObservableObject {
                 forKey: "vercelEnabledModelTypes"
             )
             guard !isBootstrappingVercelModelTypes else { return }
+            pruneVercelSelectionToEnabledTypes()
             reloadCustomProviders()
             requestConfigUpdate()
         }
@@ -834,7 +835,14 @@ class ServerManager: ObservableObject {
             guard let self else { return }
             do {
                 let saveResult = try self.customProviderCredentialStore.save(providerID: "vercel", apiKey: apiKey)
-                self.addLog("✓ Saved API key for Vercel: \(saveResult)")
+                switch saveResult {
+                case .created(let record):
+                    self.addLog("✓ Saved API key for Vercel: \(record.providerID)")
+                case .alreadyPresent(let record):
+                    self.addLog("✓ Vercel key already present: \(record.label)")
+                case .reenabled(let record):
+                    self.addLog("✓ Re-enabled Vercel key: \(record.label)")
+                }
                 self.refreshAuthBackedConfiguration()
                 DispatchQueue.main.async {
                     completion(true, "API key saved successfully")
@@ -1109,6 +1117,33 @@ class ServerManager: ObservableObject {
             }
         }
         vercelEnabledModelTypes = next
+    }
+
+    /// Drop persisted Vercel selections whose model type is no longer enabled.
+    /// No-ops when there is no selection or the catalog has not loaded yet.
+    private func pruneVercelSelectionToEnabledTypes() {
+        guard let selected = userModelSelectionStore.selectedModelIDs(forProviderID: "vercel"),
+              !selected.isEmpty else {
+            return
+        }
+        let allowed = catalogModelIDs(forProviderID: "vercel")
+        guard !allowed.isEmpty else {
+            return
+        }
+        let allowedSet = Set(allowed)
+        let pruned = selected.filter { allowedSet.contains($0) }
+        guard pruned.count != selected.count else {
+            return
+        }
+        if pruned.isEmpty {
+            if let errorMessage = userModelSelectionStore.removeModelSelection(forProviderID: "vercel") {
+                addLog("❌ \(errorMessage)")
+            }
+            return
+        }
+        if let errorMessage = userModelSelectionStore.setSelectedModelIDs(pruned, forProviderID: "vercel") {
+            addLog("❌ \(errorMessage)")
+        }
     }
 
     func getLogs() -> [String] {

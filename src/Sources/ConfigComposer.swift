@@ -294,10 +294,17 @@ enum ConfigComposer {
             .filter { $0.providerID == "vercel" && !$0.isDisabled }
             .map { ["api-key": $0.apiKey] }
         let vercelEnabled = (enabledProviders["vercel"] ?? true)
-        let vercelUserModels = selfModels(from: mergedRoot["openai-compatibility"], providerID: "vercel")
+        let vercelCatalogModels = catalogModelRowsByProviderID["vercel"] ?? []
+        let vercelAllowedNames = Set(vercelCatalogModels.compactMap { $0["name"] })
+        var vercelUserModels = selfModels(from: mergedRoot["openai-compatibility"], providerID: "vercel")
+        if !vercelAllowedNames.isEmpty {
+            vercelUserModels = vercelUserModels.filter { row in
+                vercelAllowedNames.contains(row["name"] ?? "")
+            }
+        }
         let vercelModels = !vercelUserModels.isEmpty
             ? vercelUserModels
-            : (userOverrideProviderIDs.contains("vercel") ? [] : catalogModelRowsByProviderID["vercel"] ?? [])
+            : (userOverrideProviderIDs.contains("vercel") ? [] : vercelCatalogModels)
         if vercelEnabled, !vercelModels.isEmpty || !vercelAuthKeys.isEmpty {
             let vercelEntry = makeManagedProviderEntry(
                 name: "vercel",
