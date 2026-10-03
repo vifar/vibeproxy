@@ -1,0 +1,114 @@
+@use '../../../styles/mixins' as *;
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(0, 2.6fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  &:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+.identity {
+  align-items: flex-start;
+  min-width: 0;
+}
+.identity > span:last-child {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 165px), 1fr));
+  gap: 14px 24px;
+  min-width: 0;
+}
+.quotaRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+  > :nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+.quotaRowHeader,
+.quotaMeta {
+  display: contents;
+}
+.quotaRowHeader > :first-child {
+  grid-column: 1;
+  grid-row: 1;
+}
+.quotaMeta > :first-child {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+}
+.quotaResetGroup {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plan {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.details {
+  grid-column: 1 / -1;
+}
+.actions {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  align-self: center;
+}
+.actions button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+@media (max-width: 1200px) {
+  .row {
+    grid-template-columns: minmax(145px, 0.85fr) minmax(0, 2fr);
+    gap: 16px;
+  }
+  .actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 700px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 20px 0;
+  }
+  .identity > span:last-child {
+    font-size: 12px;
+  }
+  .actions {
+    grid-column: 1;
+  }
+  .windows {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  }
+}

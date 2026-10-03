@@ -136,6 +136,18 @@ VibeProxy/
 - **AuthStatus**: Monitors `~/.cli-proxy-api/` for authentication files
 - **File Monitoring**: Real-time updates when auth files are added/removed
 
+## Management Console
+
+The customized CLIProxyAPI management frontend lives in [`management-console/`](management-console/)
+in this repository. It includes the quota ledger, per-credential credits, responsive provider
+controls, and model selections shared with the desktop app.
+
+The desktop app bundles the CLIProxyAPIPlus backend. The web console is built and installed
+separately into that backend's local static directory. See
+[`management-console/LOCAL_PANEL.md`](management-console/LOCAL_PANEL.md) for building, installing,
+and serving it privately through Tailscale. The upstream frontend's MIT license and exact source
+revision are retained in that directory.
+
 ## Credits
 
 VibeProxy is built on top of [CLIProxyAPIPlus](https://github.com/router-for-me/CLIProxyAPIPlus), an excellent unified proxy server for AI services with support for third-party providers.

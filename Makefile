@@ -1,4 +1,4 @@
-.PHONY: build app install clean run help
+.PHONY: build app install clean run help management-build management-verify management-install
 
 help: ## Show this help message
 	@echo "VibeProxy - macOS Menu Bar App"
@@ -10,6 +10,15 @@ build: ## Build the Swift executable (debug)
 	@echo "🔨 Building Swift executable..."
 	@cd src && swift build
 	@echo "✅ Build complete: src/.build/debug/CLIProxyMenuBar"
+
+management-build: ## Build the custom management console (install Bun dependencies first)
+	@cd management-console && bun run build
+
+management-verify: ## Test, lint, and build the custom management console
+	@cd management-console && bun run verify
+
+management-install: management-build ## Install the console and local model helper for this user
+	@node management-console/scripts/install-local.mjs
 
 release: ## Build the Swift executable (release)
 	@echo "🔨 Building Swift executable (release)..."
