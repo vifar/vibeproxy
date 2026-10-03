@@ -1,0 +1,36 @@
+@mixin quota-credit-details {
+  .quotaCredits {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 28px;
+    margin: 0;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border-color);
+    min-width: 0;
+  }
+  .quotaCreditItem {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+    min-width: 0;
+  }
+  .quotaCreditLabel {
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+  .quotaCreditValue {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .quotaCreditHint {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+}
