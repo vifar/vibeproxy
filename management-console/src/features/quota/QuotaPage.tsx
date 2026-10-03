@@ -54,9 +54,11 @@ import { useDevinQuotaAutoLoad } from './providers/devin/useDevinQuotaAutoLoad';
 import { useQuotaActions } from './hooks/useQuotaActions';
 import { useQuotaBatchLoader } from './hooks/useQuotaBatchLoader';
 import { readQuotaUiState, writeQuotaUiState } from './uiState';
+import { useCompatibleQuota } from './hooks/useCompatibleQuota';
+import { CompatibleQuotaSection } from './components/CompatibleQuotaSection';
 import styles from './QuotaPage.module.scss';
 
-const TAB_IDS: string[] = ['all', ...QUOTA_TAB_ORDER];
+const TAB_IDS: string[] = ['all', ...QUOTA_TAB_ORDER, 'compatible'];
 const SKELETON_CARD_COUNT = 6;
 
 /**
@@ -90,6 +92,8 @@ export function QuotaPage() {
   /* ---------- 文件列表 ---------- */
 
   const sessionGeneration = useQuotaStore((state) => state.cacheGeneration);
+  const compatible = useCompatibleQuota(!disableControls, sessionGeneration);
+  const refreshCompatible = compatible.refresh;
   const [filesGeneration, setFilesGeneration] = useState<number | null>(null);
   const listRequestRef = useRef(0);
   const loadFiles = useCallback(async () => {
@@ -119,7 +123,10 @@ export function QuotaPage() {
     }
   }, [connectionStatus, sessionGeneration, t]);
 
-  useHeaderRefresh(loadFiles);
+  const refreshPage = useCallback(async () => {
+    await Promise.all([loadFiles(), refreshCompatible()]);
+  }, [loadFiles, refreshCompatible]);
+  useHeaderRefresh(refreshPage);
 
   useEffect(() => {
     void loadFiles();
@@ -255,7 +262,8 @@ export function QuotaPage() {
     if (disableControls) return;
     pendingRefreshRef.current = sessionGeneration;
     void loadFiles();
-  }, [disableControls, loadFiles, sessionGeneration]);
+    void refreshCompatible();
+  }, [disableControls, loadFiles, sessionGeneration, refreshCompatible]);
 
   useEffect(() => {
     const wasLoading = prevLoadingRef.current;
@@ -320,10 +328,10 @@ export function QuotaPage() {
   return (
     <div className={styles.page} ref={revealRef}>
       <QuotaHeader
-        totalCount={entries.length}
-        loadedCount={loadedCount}
-        attentionCount={attentionCount}
-        refreshing={loading || batchLoading}
+        totalCount={entries.length + compatible.credentials.length}
+        loadedCount={loadedCount + compatible.loadedCount}
+        attentionCount={attentionCount + compatible.attentionCount}
+        refreshing={loading || batchLoading || compatible.loading}
         disableControls={disableControls}
         onRefreshAll={handleRefreshAll}
         showEmails={showEmails}
@@ -335,7 +343,11 @@ export function QuotaPage() {
         <div className={styles.tabsRow} data-reveal>
           <ProviderTabs
             types={TAB_IDS}
-            counts={tabCounts}
+            counts={{
+              ...tabCounts,
+              all: tabCounts.all + compatible.credentials.length,
+              compatible: compatible.credentials.length,
+            }}
             active={tab}
             resolvedTheme={resolvedTheme}
             onChange={handleTabChange}
@@ -381,15 +393,17 @@ export function QuotaPage() {
               </button>
             )}
           </div>
-          <div className={styles.sort}>
-            <Select
-              value={sortMode}
-              options={sortOptions}
-              onChange={handleSortModeChange}
-              ariaLabel={t('quota_management.sort_label')}
-              size="sm"
-            />
-          </div>
+          {tab !== 'compatible' && (
+            <div className={styles.sort}>
+              <Select
+                value={sortMode}
+                options={sortOptions}
+                onChange={handleSortModeChange}
+                ariaLabel={t('quota_management.sort_label')}
+                size="sm"
+              />
+            </div>
+          )}
         </div>
 
         {error && (
@@ -398,17 +412,21 @@ export function QuotaPage() {
           </div>
         )}
 
-        {!loading && entries.length > 0 && (
+        {tab !== 'compatible' && !loading && entries.length > 0 && (
           <QuotaSummary entries={entries} quotaFor={getQuota} resolvedTheme={resolvedTheme} />
         )}
 
-        {loading ? (
+        {tab === 'compatible' ? null : loading ? (
           <div className={styles.grid} aria-hidden="true">
             {Array.from({ length: SKELETON_CARD_COUNT }, (_, index) => (
               <Skeleton key={index} height={168} rounded={14} />
             ))}
           </div>
-        ) : isEmpty ? (
+        ) : isEmpty &&
+          !(
+            tab === 'all' &&
+            (compatible.credentials.length > 0 || compatible.loading || compatible.error)
+          ) ? (
           <EmptyState
             title={
               search.trim()
@@ -464,6 +482,25 @@ export function QuotaPage() {
           </div>
         )}
 
+        {(tab === 'all' || tab === 'compatible') && (
+          <CompatibleQuotaSection
+            credentials={compatible.credentials}
+            results={compatible.results}
+            error={compatible.error}
+            loading={compatible.loading}
+            search={search}
+            disabled={disableControls}
+            ledger={layout === 'ledger'}
+            onRefresh={(credential) => {
+              if (compatible.results[credential.id]?.httpStatus === 404) {
+                void refreshCompatible();
+              } else {
+                void compatible.refreshCredential(credential);
+              }
+            }}
+          />
+        )}
+
         {!loading && filteredEntries.length > QUOTA_PAGE_SIZE && (
           <div className={styles.pagination}>
             <Button
@@ -493,15 +530,17 @@ export function QuotaPage() {
         )}
 
         {/* 时间线只比较当前页凭证，避免大量凭证一次性生成无界泳道。 */}
-        <details className={styles.timelineDetails}>
-          <summary>{t('quota_management.windows_title')}</summary>
-          <QuotaTimeline
-            entries={pageItems}
-            quotaFor={getQuota}
-            displayNameFor={showEmails ? displayNameFor : maskQuotaIdentity}
-            resolvedTheme={resolvedTheme}
-          />
-        </details>
+        {tab !== 'compatible' && (
+          <details className={styles.timelineDetails}>
+            <summary>{t('quota_management.windows_title')}</summary>
+            <QuotaTimeline
+              entries={pageItems}
+              quotaFor={getQuota}
+              displayNameFor={showEmails ? displayNameFor : maskQuotaIdentity}
+              resolvedTheme={resolvedTheme}
+            />
+          </details>
+        )}
       </section>
     </div>
   );

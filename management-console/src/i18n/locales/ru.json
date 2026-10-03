@@ -403,7 +403,8 @@
     "quota_refresh_single": "Обновить квоту",
     "quota_refresh_hint": "Обновить квоту только для этих учётных данных",
     "quota_refresh_success": "Квота для \"{{name}}\" обновлена",
-    "quota_refresh_failed": "Не удалось обновить квоту для \"{{name}}\": {{message}}"
+    "quota_refresh_failed": "Не удалось обновить квоту для \"{{name}}\": {{message}}",
+    "filter_compatible": "Совместимые с OpenAI"
   },
   "antigravity_subscription": {
     "plan_unknown": "Неизвестно",
@@ -1918,5 +1919,33 @@
     "apiConfiguration": "Настройки API-ключей",
     "saving": "Сохранение…",
     "providerLabel": "Провайдер / подключение"
+  },
+  "compatible_quota": {
+    "title": "Совместимые с OpenAI",
+    "credential": "Учётные данные {{number}}",
+    "remaining": "Осталось {{value}}%",
+    "used": "Использовано {{value}}%",
+    "resets": "Сброс {{time}}",
+    "reset_unreported": "Время сброса не сообщено",
+    "window_session": "Лимит сессии",
+    "window_weekly": "Недельный лимит",
+    "window_monthly": "Месячный лимит",
+    "window_key_budget": "Бюджет ключа",
+    "key_remaining": "Остаток бюджета ключа",
+    "key_spent": "Расходы по ключу",
+    "scope_account": "Лимит аккаунта, включая использование вне этого прокси.",
+    "scope_key": "Лимит расходов для этого API-ключа.",
+    "scope_label_account": "Лимит аккаунта",
+    "scope_label_key": "Лимит ключа",
+    "balance_unreported": "Денежный остаток не сообщён.",
+    "updated": "Обновлено {{time}}",
+    "error": "Не удалось проверить эти учётные данные. Обновите для повтора.",
+    "unavailable": "Провайдер не сообщил распознаваемый лимит или остаток.",
+    "unsupported": "Проверка остатка для этого провайдера пока не поддерживается.",
+    "disabled": "Провайдер или учётные данные отключены.",
+    "helper_unavailable": "Остатки совместимых провайдеров недоступны. Проверьте локальный сервис VibeProxy.",
+    "empty": "Совместимые API-ключи не настроены.",
+    "refresh": "Обновить использование",
+    "refresh_credential": "Обновить {{provider}}, учётные данные {{number}}"
   }
 }

@@ -11,7 +11,7 @@ export const QUOTA_TAB_ORDER: readonly QuotaProviderType[] = [
   'meta',
 ];
 
-export type QuotaTabId = 'all' | QuotaProviderType;
+export type QuotaTabId = 'all' | 'compatible' | QuotaProviderType;
 
 /** 页级分页固定 20/页，同时把「刷新全部」的上游并发限制在 20。 */
 export const QUOTA_PAGE_SIZE = 20;

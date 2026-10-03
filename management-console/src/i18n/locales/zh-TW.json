@@ -398,7 +398,8 @@
     "quota_refresh_single": "重新整理配額",
     "quota_refresh_hint": "僅重新整理該驗證檔案的配額",
     "quota_refresh_success": "已重新整理「{{name}}」的配額",
-    "quota_refresh_failed": "重新整理「{{name}}」的配額失敗：{{message}}"
+    "quota_refresh_failed": "重新整理「{{name}}」的配額失敗：{{message}}",
+    "filter_compatible": "OpenAI 相容"
   },
   "antigravity_subscription": {
     "plan_unknown": "未知",
@@ -1948,5 +1949,33 @@
     "apiConfiguration": "API 金鑰設定",
     "saving": "正在儲存…",
     "providerLabel": "提供商 / 連線"
+  },
+  "compatible_quota": {
+    "title": "OpenAI 相容",
+    "credential": "憑證 {{number}}",
+    "remaining": "剩餘 {{value}}%",
+    "used": "已用 {{value}}%",
+    "resets": "重設時間 {{time}}",
+    "reset_unreported": "未提供重設時間",
+    "window_session": "工作階段限額",
+    "window_weekly": "每週限額",
+    "window_monthly": "每月限額",
+    "window_key_budget": "金鑰預算",
+    "key_remaining": "金鑰剩餘預算",
+    "key_spent": "金鑰累計消費",
+    "scope_account": "帳戶額度，包含此代理以外的用量。",
+    "scope_key": "此 API 金鑰的消費限額。",
+    "scope_label_account": "帳戶用量",
+    "scope_label_key": "金鑰用量",
+    "balance_unreported": "未提供金額餘額。",
+    "updated": "更新於 {{time}}",
+    "error": "無法查詢此憑證，請重新整理再試。",
+    "unavailable": "提供商未回傳可識別的限額或餘額。",
+    "unsupported": "暫不支援查詢此提供商的餘額。",
+    "disabled": "提供商或憑證已停用。",
+    "helper_unavailable": "相容提供商餘額不可用，請檢查本機 VibeProxy 輔助服務是否運行。",
+    "empty": "尚未設定相容 API 憑證。",
+    "refresh": "重新整理用量",
+    "refresh_credential": "重新整理 {{provider}} 憑證 {{number}}"
   }
 }

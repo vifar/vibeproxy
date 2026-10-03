@@ -38,6 +38,7 @@ jobs:
           node --check scripts/vibeproxy-model-bridge.mjs
           node --check scripts/vibeproxy-models.mjs
           node --check scripts/install-local.mjs
+          node --check scripts/compatible-quota.mjs
       - name: Upload management page
         uses: actions/upload-artifact@v4
         with:
