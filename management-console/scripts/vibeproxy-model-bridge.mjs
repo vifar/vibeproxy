@@ -5,6 +5,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 import { buildProviders, selectionUpdate, SERVICES } from './vibeproxy-models.mjs';
+import {
+  listCompatibleQuotaCredentials,
+  createCompatibleQuotaReader,
+} from './compatible-quota.mjs';
 
 const directory = path.join(os.homedir(), '.cli-proxy-api');
 const userPath = path.join(directory, 'config.yaml');
@@ -13,6 +17,7 @@ const basePath = '/Applications/VibeProxy.app/Contents/Resources/config.yaml';
 const cachePath = path.join(os.homedir(), 'Library/Caches/VibeProxy/proxy-provider-catalog.json');
 const backend = 'http://127.0.0.1:8318/v0/management';
 let mutation = Promise.resolve();
+const readCompatibleQuota = createCompatibleQuotaReader();
 
 async function management(key, endpoint, options = {}) {
   const response = await fetch(`${backend}${endpoint}`, {
@@ -138,6 +143,20 @@ const server = http.createServer(async (request, response) => {
     // Reuse backend authentication, including its password rotation and lockout rules.
     await management(key, '/config');
     const url = new URL(request.url, 'http://127.0.0.1:8319');
+    if (request.method === 'GET' && url.pathname.startsWith('/compatible-quotas')) {
+      const runtime = YAML.parse(await fs.readFile(runtimePath, 'utf8')) || {};
+      if (url.pathname === '/compatible-quotas') {
+        return send(response, 200, { credentials: listCompatibleQuotaCredentials(runtime) });
+      }
+      const quota = /^\/compatible-quotas\/([a-f0-9]{64})$/.exec(url.pathname);
+      if (quota) {
+        return send(
+          response,
+          200,
+          await readCompatibleQuota(runtime, quota[1], url.searchParams.get('refresh') === 'true')
+        );
+      }
+    }
     if (request.method === 'GET' && url.pathname === '/providers') {
       const current = await snapshot(key);
       return send(response, 200, { providers: current.providers });

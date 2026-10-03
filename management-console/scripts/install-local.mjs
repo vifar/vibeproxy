@@ -19,6 +19,19 @@ const domain = `gui/${process.getuid()}`;
 const xml = (value) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
+async function bootstrap(filename) {
+  // launchd may briefly return EIO while the previous job is being removed.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      execFileSync('/bin/launchctl', ['bootstrap', domain, filename], { stdio: 'pipe' });
+      return;
+    } catch (error) {
+      if (error.status !== 5 || attempt >= 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+}
+
 async function optionalRead(filename) {
   try {
     return await fs.readFile(filename);
@@ -94,7 +107,7 @@ try {
   stage = 'LaunchAgent write';
   await atomicWrite(agentPath, launchAgent);
   stage = 'LaunchAgent startup';
-  execFileSync('/bin/launchctl', ['bootstrap', domain, agentPath], { stdio: 'pipe' });
+  await bootstrap(agentPath);
 } catch {
   if ((await fs.readFile(userPath, 'utf8')) === nextSource) await atomicWrite(userPath, source);
   if (previousPanel) await atomicWrite(panelPath, previousPanel, 0o644);
@@ -102,12 +115,14 @@ try {
   if (previousAgent) {
     await atomicWrite(agentPath, previousAgent);
     try {
-      execFileSync('/bin/launchctl', ['bootstrap', domain, agentPath], { stdio: 'pipe' });
+      await bootstrap(agentPath);
     } catch {
       // Report the failed installation without printing configuration or credentials.
     }
   } else await fs.rm(agentPath, { force: true });
-  throw new Error(`Installation failed during ${stage}; the previous configuration and panel were restored.`);
+  throw new Error(
+    `Installation failed during ${stage}; the previous configuration and panel were restored.`
+  );
 }
 
 console.log('Installed the management console and local model helper.');

@@ -16,6 +16,29 @@ export interface VibeProxyProvider {
   revision: string;
 }
 
+export interface CompatibleQuotaCredential {
+  id: string;
+  providerName: string;
+  keyNumber: number;
+  enabled: boolean;
+  supported: boolean;
+  scope: 'account' | 'key';
+}
+
+export interface CompatibleQuotaResult {
+  credential: CompatibleQuotaCredential;
+  status: 'loading' | 'success' | 'unavailable' | 'unsupported' | 'disabled' | 'error';
+  windows: {
+    id: string;
+    usedPercent: number;
+    remainingPercent: number;
+    resetAt: string | null;
+  }[];
+  balances: { id: 'key_remaining' | 'key_spent'; amount: number; currency: string }[];
+  fetchedAt: string | null;
+  httpStatus?: number;
+}
+
 async function request<T>(method: string, path: string, data?: unknown): Promise<T> {
   const { managementKey } = useAuthStore.getState();
   const result = await apiCallApi.request({
@@ -25,12 +48,19 @@ async function request<T>(method: string, path: string, data?: unknown): Promise
     ...(data === undefined ? {} : { data: JSON.stringify(data) }),
   });
   if (result.statusCode < 200 || result.statusCode >= 300) {
-    throw new Error(getApiCallErrorMessage(result));
+    throw Object.assign(new Error(getApiCallErrorMessage(result)), { status: result.statusCode });
   }
   return result.body as T;
 }
 
 export const vibeproxyApi = {
+  compatibleQuotaCredentials: () =>
+    request<{ credentials: CompatibleQuotaCredential[] }>('GET', '/compatible-quotas'),
+  compatibleQuota: (id: string, force = false) =>
+    request<CompatibleQuotaResult>(
+      'GET',
+      `/compatible-quotas/${encodeURIComponent(id)}${force ? '?refresh=true' : ''}`
+    ),
   providers: () => request<{ providers: VibeProxyProvider[] }>('GET', '/providers'),
   saveModels: (provider: VibeProxyProvider, selected: string[]) =>
     request('PUT', `/providers/${encodeURIComponent(provider.id)}/models`, {

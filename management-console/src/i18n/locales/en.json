@@ -400,7 +400,8 @@
     "quota_refresh_single": "Refresh quota",
     "quota_refresh_hint": "Refresh quota only for this credential",
     "quota_refresh_success": "Quota refreshed for \"{{name}}\"",
-    "quota_refresh_failed": "Failed to refresh quota for \"{{name}}\": {{message}}"
+    "quota_refresh_failed": "Failed to refresh quota for \"{{name}}\": {{message}}",
+    "filter_compatible": "OpenAI Compatible"
   },
   "antigravity_subscription": {
     "plan_unknown": "Unknown",
@@ -1926,5 +1927,33 @@
     "accounts_one": "{{count}} account",
     "accounts_other": "{{count}} accounts",
     "providerLabel": "Provider / connection"
+  },
+  "compatible_quota": {
+    "title": "OpenAI Compatible",
+    "credential": "Credential {{number}}",
+    "remaining": "{{value}}% remaining",
+    "used": "{{value}}% used",
+    "resets": "Resets {{time}}",
+    "reset_unreported": "Reset time not reported",
+    "window_session": "Session limit",
+    "window_weekly": "Weekly limit",
+    "window_monthly": "Monthly limit",
+    "window_key_budget": "Key budget",
+    "key_remaining": "Key budget remaining",
+    "key_spent": "Key spend to date",
+    "scope_account": "Account allowance; includes usage outside this proxy.",
+    "scope_key": "Spending limit for this API key.",
+    "scope_label_account": "Account meter",
+    "scope_label_key": "Key meter",
+    "balance_unreported": "Dollar balance not reported.",
+    "updated": "Updated {{time}}",
+    "error": "Unable to query this credential. Refresh to retry.",
+    "unavailable": "The provider did not report a recognized limit or balance.",
+    "unsupported": "Balance queries are not available for this provider yet.",
+    "disabled": "Provider or credential is disabled.",
+    "helper_unavailable": "Compatible balances are unavailable. Check that the local VibeProxy helper is running.",
+    "empty": "No compatible API credentials configured.",
+    "refresh": "Refresh usage",
+    "refresh_credential": "Refresh {{provider}} credential {{number}}"
   }
 }

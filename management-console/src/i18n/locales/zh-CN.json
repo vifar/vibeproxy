@@ -398,7 +398,8 @@
     "quota_refresh_single": "刷新额度",
     "quota_refresh_hint": "仅刷新该认证文件的额度",
     "quota_refresh_success": "已刷新 \"{{name}}\" 的额度",
-    "quota_refresh_failed": "刷新 \"{{name}}\" 的额度失败：{{message}}"
+    "quota_refresh_failed": "刷新 \"{{name}}\" 的额度失败：{{message}}",
+    "filter_compatible": "OpenAI 兼容"
   },
   "antigravity_subscription": {
     "plan_unknown": "未知",
@@ -1922,5 +1923,33 @@
     "apiConfiguration": "API 密钥配置",
     "saving": "正在保存…",
     "providerLabel": "提供商 / 连接"
+  },
+  "compatible_quota": {
+    "title": "OpenAI 兼容",
+    "credential": "凭证 {{number}}",
+    "remaining": "剩余 {{value}}%",
+    "used": "已用 {{value}}%",
+    "resets": "重置时间 {{time}}",
+    "reset_unreported": "未提供重置时间",
+    "window_session": "会话限额",
+    "window_weekly": "每周限额",
+    "window_monthly": "每月限额",
+    "window_key_budget": "密钥预算",
+    "key_remaining": "密钥剩余预算",
+    "key_spent": "密钥累计消费",
+    "scope_account": "账户额度，包含此代理以外的用量。",
+    "scope_key": "此 API 密钥的消费限额。",
+    "scope_label_account": "账户用量",
+    "scope_label_key": "密钥用量",
+    "balance_unreported": "未提供金额余额。",
+    "updated": "更新于 {{time}}",
+    "error": "无法查询此凭证，请刷新重试。",
+    "unavailable": "提供商未返回可识别的限额或余额。",
+    "unsupported": "暂不支持查询此提供商的余额。",
+    "disabled": "提供商或凭证已停用。",
+    "helper_unavailable": "兼容提供商余额不可用，请检查本地 VibeProxy 辅助服务是否运行。",
+    "empty": "尚未配置兼容 API 凭证。",
+    "refresh": "刷新用量",
+    "refresh_credential": "刷新 {{provider}} 凭证 {{number}}"
   }
 }

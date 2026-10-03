@@ -37,6 +37,23 @@ xAI shows monthly and on-demand remaining budgets when billing data is available
 These figures use the existing authenticated quota refresh requests. Credit
 units and dollar spend budgets are not combined across providers.
 
+OpenAI-compatible API credentials also appear in Quota Management. The local
+helper queries Ollama Cloud's account utilization through
+`https://ollama.com/api/usage` and OpenRouter's per-key spending allowance through
+`https://openrouter.ai/api/v1/key`. Ollama session, weekly, and monthly windows
+are displayed when reported, with remaining percentages and any reported reset
+time. OpenRouter shows the key's remaining dollar budget and spend. These are
+provider-reported meters, including use outside VibeProxy; proxy request counts
+are not used to estimate the remaining allowance. Account meters are not summed
+across keys, and unreported dollar balances stay unavailable.
+
+Usage loads when the quota page opens, with three concurrent queries at most.
+Each credential has a 30-second helper cache and a manual refresh action that
+requests fresh data. Keys stay inside the local helper; responses expose only
+meter data and opaque credential IDs. Requests use fixed provider URLs, require
+matching configured origins, and reject redirects. Unsupported providers remain
+visible with an explicit unavailable status.
+
 AI Providers now includes VibeProxy's subscription services and named compatible
 providers (including Ollama Cloud, OpenCode Go, OpenRouter, and Vercel), plus
 custom providers from the desktop configuration. Connected providers appear first.
